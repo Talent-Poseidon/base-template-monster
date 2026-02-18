@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Shield, Users, Zap } from "lucide-react";
+import HelloWorld from "@/components/HelloWorld";
 
 export default async function HomePage() {
   console.log("[v0] HomePage rendering, checking Supabase connection...");
@@ -78,6 +79,11 @@ export default async function HomePage() {
             </Link>
           </div>
         </div>
+      </section>
+
+      {/* HelloWorld Component */}
+      <section className="flex flex-1 flex-col items-center justify-center px-4 py-20">
+        <HelloWorld />
       </section>
 
       {/* Features */}
