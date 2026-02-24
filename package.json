@@ -8,6 +8,7 @@
     "build": "prisma generate && next build --webpack",
     "start": "next start",
     "lint": "eslint .",
+    "test:e2e": "playwright test",
     "setup:admin": "ts-node scripts/setup-admin.ts"
   },
   "dependencies": {
