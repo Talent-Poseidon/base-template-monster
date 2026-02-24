@@ -105,8 +105,20 @@ jobs:
         env:
           DATABASE_URL: "postgresql://postgres:password@localhost:5432/mydb"
 
+      - name: Get installed Playwright version
+        id: playwright-version
+        run: echo "PLAYWRIGHT_VERSION=$(pnpm list @playwright/test --depth=0 | sed -n 's/.*@playwright\/test \([0-9.]*\).*/\1/p')" >> $GITHUB_ENV
+
+      - name: Cache Playwright Browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
       - name: Install Playwright Browsers
-        run: pnpm exec playwright install --with-deps
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium --with-deps
 
       - name: Run Playwright tests
         run: pnpm test:e2e
