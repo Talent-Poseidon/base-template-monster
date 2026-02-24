@@ -19,7 +19,11 @@ test('smoke test: login page loads correctly', async ({ page }) => {
   // await expect(page).toHaveTitle(/Login/);
 
   // Cek keberadaan elemen form login
-  // Selector ini umum untuk form login
-  const loginForm = page.locator('form');
+  // Gunakan selector yang lebih spesifik agar tidak ambigu dengan form lain (misal form social login)
+  // Kita cari form yang memiliki input password atau tombol submit
+  const loginForm = page.locator('form').filter({ hasText: 'Sign in' }).first();
   await expect(loginForm).toBeVisible();
+
+  // Verifikasi elemen kunci lainnya untuk memastikan render sempurna
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 });
