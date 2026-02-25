@@ -2,7 +2,7 @@ name: CI + Deploy
 
 on:
   push:
-    branches: ["main", "staging", "epic/*"]
+    branches: ["**"]
   pull_request:
     branches: ["main", "staging"]
 
@@ -186,7 +186,7 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           PROJECT_NAME: ${{ steps.target.outputs.project_name }}
-          DB_URL: ${{ secrets.DATABASE_URL || 'postgresql://placeholder:password@localhost:5432/db' }}
+          DB_URL: ${{ secrets.DATABASE_URL }}
           AUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'change_me_in_vercel_dashboard_32chars_min' }}
         run: |
           # teamId param hanya disertakan jika VERCEL_ORG_ID tidak kosong
@@ -224,7 +224,9 @@ jobs:
                 environmentVariables: [
                   {key: "DATABASE_URL",    value: $db_url,   type: "encrypted", target: ["production","preview","development"]},
                   {key: "NEXTAUTH_SECRET", value: $secret,   type: "encrypted", target: ["production","preview","development"]},
-                  {key: "NEXTAUTH_URL",    value: $auth_url, type: "plain",      target: ["production","preview","development"]}
+                  {key: "AUTH_SECRET",     value: $secret,   type: "encrypted", target: ["production","preview","development"]},
+                  {key: "NEXTAUTH_URL",    value: $auth_url, type: "plain",      target: ["production","preview","development"]},
+                  {key: "AUTH_URL",        value: $auth_url, type: "plain",      target: ["production","preview","development"]}
                 ]
               }')
 
@@ -257,6 +259,57 @@ jobs:
           mkdir -p .vercel
           echo "{\"orgId\":\"${{ secrets.VERCEL_ORG_ID }}\",\"projectId\":\"${{ steps.vercel_project.outputs.project_id }}\"}" \
             > .vercel/project.json
+
+      # Upsert env vars ke Vercel project (berlaku untuk project baru maupun yang sudah ada).
+      # Menggunakan ?upsert=true agar key yang sudah ada ikut ter-update.
+      - name: Upsert environment variables
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
+          DB_URL: ${{ secrets.DATABASE_URL }}
+          AUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'change_me_in_vercel_dashboard_32chars_min' }}
+          PROJECT_NAME: ${{ steps.target.outputs.project_name }}
+        run: |
+          if [[ -z "$DB_URL" ]]; then
+            echo "❌ SECRET 'DATABASE_URL' tidak ditemukan di GitHub. Abort."
+            exit 1
+          fi
+
+          if [[ -n "$VERCEL_ORG_ID" ]]; then
+            TEAM_PARAM="?teamId=${VERCEL_ORG_ID}&upsert=true"
+          else
+            TEAM_PARAM="?upsert=true"
+          fi
+
+          NEXTAUTH_URL_VALUE="https://${PROJECT_NAME}.vercel.app"
+
+          PAYLOAD=$(jq -n \
+            --arg db_url    "$DB_URL" \
+            --arg secret    "$AUTH_SECRET" \
+            --arg auth_url  "$NEXTAUTH_URL_VALUE" \
+            '[
+              {key: "DATABASE_URL",    value: $db_url,   type: "encrypted", target: ["production","preview","development"]},
+              {key: "NEXTAUTH_SECRET", value: $secret,   type: "encrypted", target: ["production","preview","development"]},
+              {key: "AUTH_SECRET",     value: $secret,   type: "encrypted", target: ["production","preview","development"]},
+              {key: "NEXTAUTH_URL",    value: $auth_url, type: "plain",      target: ["production","preview","development"]},
+              {key: "AUTH_URL",        value: $auth_url, type: "plain",      target: ["production","preview","development"]}
+            ]')
+
+          STATUS=$(curl -s -o /tmp/env_res.json -w "%{http_code}" \
+            -X POST \
+            "https://api.vercel.com/v10/projects/${PROJECT_ID}/env${TEAM_PARAM}" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          echo "Upsert env vars status: ${STATUS}"
+          if [[ "$STATUS" != "200" && "$STATUS" != "201" ]]; then
+            echo "❌ Gagal upsert env vars. Response:"
+            cat /tmp/env_res.json
+            exit 1
+          fi
+          echo "✅ Environment variables (DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL) berhasil di-update."
 
       # Deploy ke Vercel production URL project yang bersangkutan
       # --prod → aktifkan sebagai deployment utama (bukan preview)
