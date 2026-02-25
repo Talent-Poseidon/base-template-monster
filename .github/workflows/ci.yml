@@ -105,6 +105,11 @@ jobs:
         env:
           DATABASE_URL: "postgresql://postgres:password@localhost:5432/mydb"
 
+      - name: Seed Database
+        run: pnpm prisma db seed
+        env:
+          DATABASE_URL: "postgresql://postgres:password@localhost:5432/mydb"
+
       - name: Get installed Playwright version
         id: playwright-version
         run: echo "PLAYWRIGHT_VERSION=$(pnpm list @playwright/test --depth=0 | sed -n 's/.*@playwright\/test \([0-9.]*\).*/\1/p')" >> $GITHUB_ENV
