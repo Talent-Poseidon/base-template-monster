@@ -1,28 +1,76 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getToken } from "next-auth/jwt";
+import { jwtDecrypt } from "jose";
 
-// Use getToken from next-auth/jwt instead of the full NextAuth import.
-// The full `next-auth` package contains __dirname references that crash
-// Vercel Edge Runtime. next-auth/jwt is pure crypto (jose + hkdf) and
-// is fully Edge Runtime compatible.
+// Derive the AES-256 decryption key using the same HKDF parameters
+// that @auth/core uses internally when encrypting the session JWT.
+async function getDecryptionKey(
+  secret: string,
+  salt: string
+): Promise<Uint8Array> {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HKDF" },
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: enc.encode(salt),
+      info: enc.encode(
+        `Auth.js Generated Encryption Key${salt ? ` (${salt})` : ""}`
+      ),
+    },
+    baseKey,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
+// Read and decrypt the next-auth v5 session cookie using jose directly.
+// This avoids importing anything from next-auth, which bundles __dirname
+// references that crash Vercel Edge Runtime.
+async function getSession(req: NextRequest) {
+  const isSecure = req.nextUrl.protocol === "https:";
+  const cookieName = isSecure
+    ? "__Secure-authjs.session-token"
+    : "authjs.session-token";
+
+  const token = req.cookies.get(cookieName)?.value;
+  if (!token) return null;
+
+  const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!secret) return null;
+
+  try {
+    const key = await getDecryptionKey(secret, cookieName);
+    const { payload } = await jwtDecrypt(token, key, { clockTolerance: 15 });
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
 export async function middleware(req: NextRequest) {
-  const token = await getToken({
-    req,
-    secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
-  });
+  const session = await getSession(req);
 
-  const isLoggedIn = !!token;
-  const isApproved = token?.is_approved as boolean | undefined;
+  const isLoggedIn = !!session;
+  const isApproved = session?.is_approved as boolean | undefined;
   const { pathname } = req.nextUrl;
 
   const isOnDashboard = pathname.startsWith("/dashboard");
   const isOnAdmin = pathname.startsWith("/admin");
   const isOnPending = pathname.startsWith("/auth/pending-approval");
 
-  // Logged in but not approved → redirect to pending page
+  // Logged in but not yet approved → hold on pending page only
   if (isLoggedIn && !isApproved) {
     if (isOnPending) return NextResponse.next();
-    return NextResponse.redirect(new URL("/auth/pending-approval", req.nextUrl));
+    return NextResponse.redirect(
+      new URL("/auth/pending-approval", req.nextUrl)
+    );
   }
 
   if (isOnDashboard || isOnAdmin) {
