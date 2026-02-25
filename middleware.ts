@@ -1,14 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtDecrypt } from "jose";
 
-// Derive the AES-256 decryption key using the same HKDF parameters
-// that @auth/core uses internally when encrypting the session JWT.
-async function getDecryptionKey(
+// ─── Pure Web Crypto helpers (no external deps = no __dirname) ───────────────
+
+function b64urlDecode(str: string): Uint8Array {
+  const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+  const bin = atob(padded);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+/** HKDF-SHA256 — mirrors the key derivation in @auth/core */
+async function hkdfDerive(
   secret: string,
-  salt: string
+  salt: string,
+  length: number
 ): Promise<Uint8Array> {
   const enc = new TextEncoder();
-  const baseKey = await crypto.subtle.importKey(
+  const base = await crypto.subtle.importKey(
     "raw",
     enc.encode(secret),
     { name: "HKDF" },
@@ -24,15 +32,51 @@ async function getDecryptionKey(
         `Auth.js Generated Encryption Key${salt ? ` (${salt})` : ""}`
       ),
     },
-    baseKey,
-    256
+    base,
+    length * 8
   );
   return new Uint8Array(bits);
 }
 
-// Read and decrypt the next-auth v5 session cookie using jose directly.
-// This avoids importing anything from next-auth, which bundles __dirname
-// references that crash Vercel Edge Runtime.
+/** Decrypt a JWE compact token (alg=dir, enc=A256GCM) using Web Crypto */
+async function decryptJWE(
+  token: string,
+  rawKey: Uint8Array
+): Promise<Record<string, unknown> | null> {
+  const parts = token.split(".");
+  if (parts.length !== 5) return null;
+
+  const [headerB64, , ivB64, ciphertextB64, tagB64] = parts;
+  const iv = b64urlDecode(ivB64);
+  const ciphertext = b64urlDecode(ciphertextB64);
+  const tag = b64urlDecode(tagB64);
+
+  // Web Crypto AES-GCM expects ciphertext || tag concatenated
+  const combined = new Uint8Array(ciphertext.length + tag.length);
+  combined.set(ciphertext);
+  combined.set(tag, ciphertext.length);
+
+  const aad = new TextEncoder().encode(headerB64);
+
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      rawKey.slice(0, 32),
+      "AES-GCM",
+      false,
+      ["decrypt"]
+    );
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv, additionalData: aad, tagLength: 128 },
+      key,
+      combined
+    );
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch {
+    return null;
+  }
+}
+
 async function getSession(req: NextRequest) {
   const isSecure = req.nextUrl.protocol === "https:";
   const cookieName = isSecure
@@ -46,13 +90,14 @@ async function getSession(req: NextRequest) {
   if (!secret) return null;
 
   try {
-    const key = await getDecryptionKey(secret, cookieName);
-    const { payload } = await jwtDecrypt(token, key, { clockTolerance: 15 });
-    return payload;
+    const key = await hkdfDerive(secret, cookieName, 32);
+    return await decryptJWE(token, key);
   } catch {
     return null;
   }
 }
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
 
 export async function middleware(req: NextRequest) {
   const session = await getSession(req);
@@ -65,7 +110,6 @@ export async function middleware(req: NextRequest) {
   const isOnAdmin = pathname.startsWith("/admin");
   const isOnPending = pathname.startsWith("/auth/pending-approval");
 
-  // Logged in but not yet approved → hold on pending page only
   if (isLoggedIn && !isApproved) {
     if (isOnPending) return NextResponse.next();
     return NextResponse.redirect(
@@ -77,7 +121,6 @@ export async function middleware(req: NextRequest) {
     if (isLoggedIn) return NextResponse.next();
     return NextResponse.redirect(new URL("/auth/login", req.nextUrl));
   } else if (isLoggedIn) {
-    // Redirect authenticated + approved users away from auth pages
     if (pathname.startsWith("/auth")) {
       return NextResponse.redirect(new URL("/dashboard", req.nextUrl));
     }
