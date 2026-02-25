@@ -4,8 +4,8 @@ const bcrypt = require("bcryptjs");
 const prisma = new PrismaClient();
 
 async function main() {
-  const email = "admin@monster.com";
-  const password = "adminpassword"; // Ganti dengan password aman di produksi
+  const email = "admin@example.com";
+  const password = "password123"; // Ganti dengan password aman di produksi
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const admin = await prisma.user.upsert({
