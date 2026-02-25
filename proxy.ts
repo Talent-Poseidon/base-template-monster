@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// ─── Pure Web Crypto helpers (no external deps = no __dirname) ───────────────
+// Next.js 16: proxy.ts replaces middleware.ts and runs on Node.js runtime
+// (not Edge Runtime), so there are no __dirname or crypto-API limitations.
 
 function b64urlDecode(str: string): Uint8Array {
   const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
@@ -9,7 +10,6 @@ function b64urlDecode(str: string): Uint8Array {
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
-/** HKDF-SHA256 — mirrors the key derivation in @auth/core */
 async function hkdfDerive(
   secret: string,
   salt: string,
@@ -38,7 +38,6 @@ async function hkdfDerive(
   return new Uint8Array(bits);
 }
 
-/** Decrypt a JWE compact token (alg=dir, enc=A256GCM) using Web Crypto */
 async function decryptJWE(
   token: string,
   rawKey: Uint8Array
@@ -51,7 +50,6 @@ async function decryptJWE(
   const ciphertext = b64urlDecode(ciphertextB64);
   const tag = b64urlDecode(tagB64);
 
-  // Web Crypto AES-GCM expects ciphertext || tag concatenated
   const combined = new Uint8Array(ciphertext.length + tag.length);
   combined.set(ciphertext);
   combined.set(tag, ciphertext.length);
@@ -97,9 +95,7 @@ async function getSession(req: NextRequest) {
   }
 }
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const session = await getSession(req);
 
   const isLoggedIn = !!session;
