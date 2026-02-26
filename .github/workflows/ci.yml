@@ -395,9 +395,9 @@ jobs:
           PROJECT_NAME: ${{ steps.target.outputs.project_name }}
         run: |
           echo "=== Starting deployment ==="
+          # Use set -o pipefail so pipeline exit = vercel's exit, not tee's
+          set -o pipefail
           vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log
-          DEPLOY_EXIT=$?
-          echo "=== Deploy exit code: ${DEPLOY_EXIT} ==="
           echo "=== Full deploy log ==="
           cat /tmp/vercel_deploy.log
 
@@ -405,8 +405,6 @@ jobs:
           DEPLOY_URL=$(grep -oE 'https://[^ ]+\.vercel\.app' /tmp/vercel_deploy.log | tail -1)
           echo "=== Deployment URL: ${DEPLOY_URL} ==="
           echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
-
-          if [[ "$DEPLOY_EXIT" -ne 0 ]]; then exit $DEPLOY_EXIT; fi
 
       - name: Verify deployment
         env:
