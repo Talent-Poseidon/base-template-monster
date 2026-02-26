@@ -336,6 +336,13 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+      # Pull project settings dari Vercel (diperlukan sebelum vercel build)
+      - name: Pull Vercel project settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: vercel pull --yes --environment=production --token="${VERCEL_TOKEN}"
+
       # Build aplikasi lokal menggunakan Vercel CLI (menarik env vars dari Vercel project)
       # Lebih reliable dari remote build: output build terlihat di CI log jika ada error
       - name: Build with Vercel
