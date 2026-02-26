@@ -341,6 +341,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
         run: vercel pull --yes --environment=production --token="${VERCEL_TOKEN}"
 
       # Build aplikasi lokal menggunakan Vercel CLI (menarik env vars dari Vercel project)
@@ -349,6 +350,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
         run: vercel build --prod --token="${VERCEL_TOKEN}"
 
       # Deploy pre-built artifacts ke Vercel production
@@ -356,4 +358,5 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
         run: vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}"
