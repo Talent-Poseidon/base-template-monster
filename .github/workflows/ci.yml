@@ -351,12 +351,41 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-        run: vercel build --prod --token="${VERCEL_TOKEN}"
+        run: |
+          vercel build --prod --token="${VERCEL_TOKEN}"
+          echo "=== Build output structure ==="
+          ls -la .vercel/output/ || echo "No .vercel/output dir"
+          echo "=== config.json ==="
+          cat .vercel/output/config.json 2>/dev/null | head -50 || echo "No config.json"
+          echo "=== Functions ==="
+          ls .vercel/output/functions/ 2>/dev/null || echo "No functions dir"
 
       # Deploy pre-built artifacts ke Vercel production
       - name: Deploy to Vercel
+        id: deploy
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-        run: vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}"
+        run: |
+          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log | tail -1)
+          echo "=== Deploy output ==="
+          cat /tmp/vercel_deploy.log
+          echo "=== Deployment URL: ${DEPLOY_URL} ==="
+          echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
+
+      - name: Verify deployment
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          echo "Testing: ${DEPLOY_URL}"
+          sleep 10
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${DEPLOY_URL}" || echo "000")
+          echo "HTTP response: ${HTTP_CODE}"
+          if [[ "$HTTP_CODE" == "000" ]]; then
+            echo "⚠️ Could not reach deployment URL"
+          elif [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 400 ]]; then
+            echo "✅ Deployment is live!"
+          else
+            echo "⚠️ Unexpected HTTP code: ${HTTP_CODE}"
+          fi
