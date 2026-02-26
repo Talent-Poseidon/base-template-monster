@@ -217,7 +217,13 @@ jobs:
           echo "GET project status: ${HTTP_STATUS}"
 
           if [[ "$HTTP_STATUS" == "200" ]]; then
-            echo "✅ Vercel project '${PROJECT_NAME}' sudah ada."
+            echo "✅ Vercel project '${PROJECT_NAME}' sudah ada. Ensuring framework=nextjs..."
+            curl -s -X PATCH \
+              "https://api.vercel.com/v9/projects/${PROJECT_NAME}${TEAM_PARAM}" \
+              -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"framework":"nextjs"}' \
+              | jq '{id,framework}' || true
           else
             echo "🆕 Project belum ada (HTTP ${HTTP_STATUS}), membuat baru..."
 
@@ -230,6 +236,7 @@ jobs:
               --arg auth_url  "$NEXTAUTH_URL_VALUE" \
               '{
                 name: $name,
+                framework: "nextjs",
                 gitRepository: {type: "github", repo: $repo},
                 commandForIgnoringBuildStep: "exit 0",
                 environmentVariables: [
@@ -336,30 +343,6 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
-      # Pull project settings dari Vercel (diperlukan sebelum vercel build)
-      - name: Pull Vercel project settings
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-        run: vercel pull --yes --environment=production --token="${VERCEL_TOKEN}"
-
-      # Build aplikasi lokal menggunakan Vercel CLI (menarik env vars dari Vercel project)
-      # Lebih reliable dari remote build: output build terlihat di CI log jika ada error
-      - name: Build with Vercel
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-        run: |
-          vercel build --prod --token="${VERCEL_TOKEN}"
-          echo "=== Build output structure ==="
-          ls -la .vercel/output/ || echo "No .vercel/output dir"
-          echo "=== config.json ==="
-          cat .vercel/output/config.json 2>/dev/null | head -50 || echo "No config.json"
-          echo "=== Functions ==="
-          ls .vercel/output/functions/ 2>/dev/null || echo "No functions dir"
-
       # Inspect Vercel project before deploying
       - name: Inspect Vercel project
         env:
@@ -385,7 +368,8 @@ jobs:
             | jq '.deployments[]|"\(.url) | \(.state) | \(.meta.githubCommitMessage // "")"' \
             || echo "Failed to list deployments"
 
-      # Deploy pre-built artifacts ke Vercel production
+      # Deploy source ke Vercel — Vercel build di server mereka (remote build)
+      # Lebih reliable karena Vercel tahu framework=nextjs dan build environment-nya
       - name: Deploy to Vercel
         id: deploy
         env:
@@ -394,10 +378,10 @@ jobs:
           VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
           PROJECT_NAME: ${{ steps.target.outputs.project_name }}
         run: |
-          echo "=== Starting deployment ==="
+          echo "=== Starting remote deployment ==="
           # Use set -o pipefail so pipeline exit = vercel's exit, not tee's
           set -o pipefail
-          vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log
+          vercel deploy --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log
           echo "=== Full deploy log ==="
           cat /tmp/vercel_deploy.log
 
