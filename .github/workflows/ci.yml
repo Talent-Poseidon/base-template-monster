@@ -367,25 +367,42 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
+          PROJECT_NAME: ${{ steps.target.outputs.project_name }}
         run: |
-          DEPLOY_URL=$(vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log | tail -1)
-          echo "=== Deploy output ==="
-          cat /tmp/vercel_deploy.log
+          echo "=== Starting deployment ==="
+          vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log
+          DEPLOY_EXIT=$?
+          echo "=== Deploy exit code: ${DEPLOY_EXIT} ==="
+
+          # Extract the deployment URL (last https:// line)
+          DEPLOY_URL=$(grep -oE 'https://[^ ]+\.vercel\.app' /tmp/vercel_deploy.log | tail -1)
           echo "=== Deployment URL: ${DEPLOY_URL} ==="
           echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
+
+          # Explicitly alias to production domain (belt-and-suspenders)
+          PROD_DOMAIN="${PROJECT_NAME}.vercel.app"
+          if [[ -n "$DEPLOY_URL" && "$DEPLOY_URL" != "https://${PROD_DOMAIN}" ]]; then
+            echo "=== Aliasing ${DEPLOY_URL} → ${PROD_DOMAIN} ==="
+            if [[ -n "$VERCEL_ORG_ID" ]]; then
+              vercel alias set "${DEPLOY_URL}" "${PROD_DOMAIN}" --token="${VERCEL_TOKEN}" --scope="${VERCEL_ORG_ID}" || true
+            else
+              vercel alias set "${DEPLOY_URL}" "${PROD_DOMAIN}" --token="${VERCEL_TOKEN}" || true
+            fi
+          fi
+
+          if [[ "$DEPLOY_EXIT" -ne 0 ]]; then exit $DEPLOY_EXIT; fi
 
       - name: Verify deployment
         env:
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          PROJECT_NAME: ${{ steps.target.outputs.project_name }}
         run: |
-          echo "Testing: ${DEPLOY_URL}"
-          sleep 10
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${DEPLOY_URL}" || echo "000")
-          echo "HTTP response: ${HTTP_CODE}"
-          if [[ "$HTTP_CODE" == "000" ]]; then
-            echo "⚠️ Could not reach deployment URL"
-          elif [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 400 ]]; then
-            echo "✅ Deployment is live!"
-          else
-            echo "⚠️ Unexpected HTTP code: ${HTTP_CODE}"
-          fi
+          PROD_URL="https://${PROJECT_NAME}.vercel.app"
+          echo "Testing preview URL: ${DEPLOY_URL}"
+          echo "Testing production URL: ${PROD_URL}"
+          sleep 15
+          for url in "${DEPLOY_URL}" "${PROD_URL}"; do
+            if [[ -z "$url" ]]; then continue; fi
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$url" || echo "000")
+            echo "  ${url} → HTTP ${HTTP_CODE}"
+          done
