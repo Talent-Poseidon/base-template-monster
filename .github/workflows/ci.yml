@@ -173,6 +173,17 @@ jobs:
             echo "project_name=${REPO}-staging" >> $GITHUB_OUTPUT
           fi
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
@@ -311,11 +322,28 @@ jobs:
           fi
           echo "✅ Environment variables (DATABASE_URL, NEXTAUTH_SECRET, NEXTAUTH_URL) berhasil di-update."
 
-      # Deploy ke Vercel production URL project yang bersangkutan
-      # --prod → aktifkan sebagai deployment utama (bukan preview)
+      # Install dependencies untuk menjalankan prisma migrate deploy
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Jalankan Prisma migrations ke database production (Supabase)
+      # Idempotent: hanya apply migrasi yang belum diapply
+      - name: Run Prisma Migrations
+        run: pnpm prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # Build aplikasi lokal menggunakan Vercel CLI (menarik env vars dari Vercel project)
+      # Lebih reliable dari remote build: output build terlihat di CI log jika ada error
+      - name: Build with Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+        run: vercel build --prod --token="${VERCEL_TOKEN}"
+
+      # Deploy pre-built artifacts ke Vercel production
       - name: Deploy to Vercel
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-        run: vercel deploy --prod --token="${VERCEL_TOKEN}"
+        run: vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}"
