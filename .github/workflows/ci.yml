@@ -360,6 +360,41 @@ jobs:
           echo "=== Functions ==="
           ls .vercel/output/functions/ 2>/dev/null || echo "No functions dir"
 
+      # Inspect Vercel project before deploying
+      - name: Inspect Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
+          PROJECT_NAME: ${{ steps.target.outputs.project_name }}
+        run: |
+          if [[ -n "$VERCEL_ORG_ID" ]]; then
+            TEAM_PARAM="?teamId=${VERCEL_ORG_ID}"
+          else
+            TEAM_PARAM=""
+          fi
+          echo "=== Project info ==="
+          curl -s "https://api.vercel.com/v9/projects/${PROJECT_NAME}${TEAM_PARAM}" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print('id:', d.get('id'))
+print('name:', d.get('name'))
+print('framework:', d.get('framework'))
+print('productionBranch:', d.get('productionBranch'))
+print('aliases:', [a.get('domain') for a in d.get('alias', []) if a.get('type') == 'SYSTEM'][:5])
+print('latestDeployments:', len(d.get('latestDeployments', [])))
+" 2>/dev/null || echo "Failed to get project info"
+
+          echo "=== Recent deployments ==="
+          curl -s "https://api.vercel.com/v6/deployments?projectId=${PROJECT_ID}&limit=3${TEAM_PARAM:+&teamId=${VERCEL_ORG_ID}}" \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for dep in d.get('deployments', [])[:3]:
+    print(dep.get('url'), '|', dep.get('state'), '|', dep.get('meta', {}).get('githubCommitMessage', '')[:40])
+" 2>/dev/null || echo "Failed to list deployments"
+
       # Deploy pre-built artifacts ke Vercel production
       - name: Deploy to Vercel
         id: deploy
@@ -373,22 +408,13 @@ jobs:
           vercel deploy --prebuilt --prod --token="${VERCEL_TOKEN}" 2>&1 | tee /tmp/vercel_deploy.log
           DEPLOY_EXIT=$?
           echo "=== Deploy exit code: ${DEPLOY_EXIT} ==="
+          echo "=== Full deploy log ==="
+          cat /tmp/vercel_deploy.log
 
           # Extract the deployment URL (last https:// line)
           DEPLOY_URL=$(grep -oE 'https://[^ ]+\.vercel\.app' /tmp/vercel_deploy.log | tail -1)
           echo "=== Deployment URL: ${DEPLOY_URL} ==="
           echo "url=${DEPLOY_URL}" >> $GITHUB_OUTPUT
-
-          # Explicitly alias to production domain (belt-and-suspenders)
-          PROD_DOMAIN="${PROJECT_NAME}.vercel.app"
-          if [[ -n "$DEPLOY_URL" && "$DEPLOY_URL" != "https://${PROD_DOMAIN}" ]]; then
-            echo "=== Aliasing ${DEPLOY_URL} → ${PROD_DOMAIN} ==="
-            if [[ -n "$VERCEL_ORG_ID" ]]; then
-              vercel alias set "${DEPLOY_URL}" "${PROD_DOMAIN}" --token="${VERCEL_TOKEN}" --scope="${VERCEL_ORG_ID}" || true
-            else
-              vercel alias set "${DEPLOY_URL}" "${PROD_DOMAIN}" --token="${VERCEL_TOKEN}" || true
-            fi
-          fi
 
           if [[ "$DEPLOY_EXIT" -ne 0 ]]; then exit $DEPLOY_EXIT; fi
 
