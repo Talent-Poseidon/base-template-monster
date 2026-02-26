@@ -375,25 +375,15 @@ jobs:
           fi
           echo "=== Project info ==="
           curl -s "https://api.vercel.com/v9/projects/${PROJECT_NAME}${TEAM_PARAM}" \
-            -H "Authorization: Bearer ${VERCEL_TOKEN}" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print('id:', d.get('id'))
-print('name:', d.get('name'))
-print('framework:', d.get('framework'))
-print('productionBranch:', d.get('productionBranch'))
-print('aliases:', [a.get('domain') for a in d.get('alias', []) if a.get('type') == 'SYSTEM'][:5])
-print('latestDeployments:', len(d.get('latestDeployments', [])))
-" 2>/dev/null || echo "Failed to get project info"
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            | jq '{id,name,framework,productionBranch,aliases:[.alias[]|select(.type=="SYSTEM")|.domain]}' \
+            || echo "Failed to get project info"
 
           echo "=== Recent deployments ==="
           curl -s "https://api.vercel.com/v6/deployments?projectId=${PROJECT_ID}&limit=3${TEAM_PARAM:+&teamId=${VERCEL_ORG_ID}}" \
-            -H "Authorization: Bearer ${VERCEL_TOKEN}" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-for dep in d.get('deployments', [])[:3]:
-    print(dep.get('url'), '|', dep.get('state'), '|', dep.get('meta', {}).get('githubCommitMessage', '')[:40])
-" 2>/dev/null || echo "Failed to list deployments"
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            | jq '.deployments[]|"\(.url) | \(.state) | \(.meta.githubCommitMessage // "")"' \
+            || echo "Failed to list deployments"
 
       # Deploy pre-built artifacts ke Vercel production
       - name: Deploy to Vercel
