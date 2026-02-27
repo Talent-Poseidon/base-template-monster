@@ -1,22 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jwtDecrypt } from "jose";
 
 // Next.js 16: proxy.ts replaces middleware.ts and runs on Node.js runtime
 // (not Edge Runtime), so there are no __dirname or crypto-API limitations.
 
-function b64urlDecode(str: string): Uint8Array {
-  const b64 = str.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
-  const bin = atob(padded);
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
-}
-
-async function hkdfDerive(
+/**
+ * Derive the encryption key using HKDF, matching auth.js internal implementation.
+ * Auth.js uses: hkdf("sha256", secret, salt=cookieName, info="Auth.js Generated Encryption Key (cookieName)", keyLength)
+ */
+async function deriveEncryptionKey(
   secret: string,
   salt: string,
   length: number
 ): Promise<Uint8Array> {
   const enc = new TextEncoder();
-  const base = await crypto.subtle.importKey(
+  const baseKey = await crypto.subtle.importKey(
     "raw",
     enc.encode(secret),
     { name: "HKDF" },
@@ -28,50 +26,32 @@ async function hkdfDerive(
       name: "HKDF",
       hash: "SHA-256",
       salt: enc.encode(salt),
-      info: enc.encode(
-        `Auth.js Generated Encryption Key${salt ? ` (${salt})` : ""}`
-      ),
+      info: enc.encode(`Auth.js Generated Encryption Key (${salt})`),
     },
-    base,
+    baseKey,
     length * 8
   );
   return new Uint8Array(bits);
 }
 
-async function decryptJWE(
-  token: string,
-  rawKey: Uint8Array
-): Promise<Record<string, unknown> | null> {
-  const parts = token.split(".");
-  if (parts.length !== 5) return null;
-
-  const [headerB64, , ivB64, ciphertextB64, tagB64] = parts;
-  const iv = b64urlDecode(ivB64);
-  const ciphertext = b64urlDecode(ciphertextB64);
-  const tag = b64urlDecode(tagB64);
-
-  const combined = new Uint8Array(ciphertext.length + tag.length);
-  combined.set(ciphertext);
-  combined.set(tag, ciphertext.length);
-
-  const aad = new TextEncoder().encode(headerB64);
-
+/**
+ * Determine the required key length from the JWE content encryption algorithm.
+ * A256CBC-HS512 (auth.js default) = 64 bytes, A256GCM = 32 bytes.
+ */
+function getKeyLengthFromToken(token: string): number {
   try {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      rawKey.slice(0, 32),
-      "AES-GCM",
-      false,
-      ["decrypt"]
-    );
-    const plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv, additionalData: aad, tagLength: 128 },
-      key,
-      combined
-    );
-    return JSON.parse(new TextDecoder().decode(plain));
+    const headerB64 = token.split(".")[0];
+    const padded = headerB64
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(headerB64.length + ((4 - (headerB64.length % 4)) % 4), "=");
+    const headerJson = JSON.parse(atob(padded));
+    const enc = headerJson.enc || "A256CBC-HS512";
+    console.log(`[Proxy] JWE header: alg=${headerJson.alg}, enc=${enc}`);
+    return enc === "A256CBC-HS512" ? 64 : 32;
   } catch {
-    return null;
+    console.log("[Proxy] Failed to parse JWE header, defaulting to 64-byte key (A256CBC-HS512)");
+    return 64; // default for A256CBC-HS512
   }
 }
 
@@ -82,44 +62,82 @@ async function getSession(req: NextRequest) {
     : "authjs.session-token";
 
   const token = req.cookies.get(cookieName)?.value;
-  if (!token) return null;
+  if (!token) {
+    console.log(`[Proxy] No cookie '${cookieName}' found in request`);
+    return null;
+  }
+  console.log(`[Proxy] Cookie '${cookieName}' found (length: ${token.length})`);
 
   const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
-  if (!secret) return null;
+  if (!secret) {
+    console.error("[Proxy] CRITICAL: No AUTH_SECRET or NEXTAUTH_SECRET env var found!");
+    return null;
+  }
 
   try {
-    const key = await hkdfDerive(secret, cookieName, 32);
-    return await decryptJWE(token, key);
-  } catch {
+    const keyLength = getKeyLengthFromToken(token);
+    const encryptionKey = await deriveEncryptionKey(secret, cookieName, keyLength);
+    console.log(`[Proxy] Derived ${keyLength}-byte encryption key`);
+
+    const { payload } = await jwtDecrypt(token, encryptionKey, {
+      clockTolerance: 15,
+    });
+
+    console.log(`[Proxy] JWT decrypted successfully. sub=${payload.sub}, email=${payload.email}, role=${payload.role}, is_approved=${payload.is_approved}`);
+    return payload;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Proxy] JWT decryption failed: ${message}`);
     return null;
   }
 }
 
 export async function proxy(req: NextRequest) {
-  const session = await getSession(req);
+  const { pathname } = req.nextUrl;
 
+  // Skip logging for static/internal routes
+  const isProtectedRoute = pathname.startsWith("/dashboard") || pathname.startsWith("/admin");
+  const isAuthRoute = pathname.startsWith("/auth");
+
+  if (!isProtectedRoute && !isAuthRoute) {
+    return NextResponse.next();
+  }
+
+  console.log(`[Proxy] Processing: ${pathname}`);
+
+  const session = await getSession(req);
   const isLoggedIn = !!session;
   const isApproved = session?.is_approved as boolean | undefined;
-  const { pathname } = req.nextUrl;
+
+  console.log(`[Proxy] Session check: isLoggedIn=${isLoggedIn}, isApproved=${isApproved}, path=${pathname}`);
 
   const isOnDashboard = pathname.startsWith("/dashboard");
   const isOnAdmin = pathname.startsWith("/admin");
   const isOnPending = pathname.startsWith("/auth/pending-approval");
 
+  // Logged in but not approved → redirect to pending approval
   if (isLoggedIn && !isApproved) {
     if (isOnPending) return NextResponse.next();
+    console.log(`[Proxy] User not approved, redirecting to /auth/pending-approval`);
     return NextResponse.redirect(
       new URL("/auth/pending-approval", req.nextUrl)
     );
   }
 
+  // Protected routes require authentication
   if (isOnDashboard || isOnAdmin) {
-    if (isLoggedIn) return NextResponse.next();
-    return NextResponse.redirect(new URL("/auth/login", req.nextUrl));
-  } else if (isLoggedIn) {
-    if (pathname.startsWith("/auth")) {
-      return NextResponse.redirect(new URL("/dashboard", req.nextUrl));
+    if (isLoggedIn) {
+      console.log(`[Proxy] Authenticated access to ${pathname} - ALLOWED`);
+      return NextResponse.next();
     }
+    console.log(`[Proxy] Unauthenticated access to ${pathname} - redirecting to /auth/login`);
+    return NextResponse.redirect(new URL("/auth/login", req.nextUrl));
+  }
+
+  // Redirect authenticated users away from auth pages
+  if (isLoggedIn && isAuthRoute) {
+    console.log(`[Proxy] Authenticated user on auth page, redirecting to /dashboard`);
+    return NextResponse.redirect(new URL("/dashboard", req.nextUrl));
   }
 
   return NextResponse.next();

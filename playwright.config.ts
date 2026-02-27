@@ -27,14 +27,46 @@ export default defineConfig({
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
+    
+    /* Set a consistent user agent to avoid session invalidation */
+    userAgent: 'Playwright-E2E-Test-Agent',
   },
 
   /* Configure projects for major browsers */
   projects: [
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      name: 'setup',
+      testMatch: /auth\.setup\.ts/,
     },
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: 'playwright/.auth/admin.json',
+      },
+      dependencies: ['setup'],
+      // Exclude tests that need unauthenticated (guest) context
+      testIgnore: [
+        '**/auth/login.spec.ts',
+        '**/auth/register.spec.ts',
+        '**/smoke.spec.ts',
+        '**/dashboard/access.spec.ts',
+      ],
+    },
+    {
+      name: 'chromium-no-auth',
+      use: {
+        ...devices['Desktop Chrome'],
+        // No storageState means fresh (guest) session
+      },
+      // Tests that must run without pre-existing authentication
+      testMatch: [
+        '**/auth/login.spec.ts',
+        '**/auth/register.spec.ts',
+        '**/smoke.spec.ts',
+        '**/dashboard/access.spec.ts',
+      ],
+    }
   ],
 
   /* Run your local dev server before starting the tests */

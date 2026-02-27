@@ -1,29 +1,23 @@
 import { test, expect } from '@playwright/test';
 
+// This file runs in chromium-no-auth (no storageState = guest session)
+
 test('smoke test: login page loads correctly', async ({ page }) => {
-  // Buka halaman login
+  console.log('[Smoke Test] Navigating to /auth/login as guest...');
   await page.goto('/auth/login');
 
-  // Verifikasi judul halaman atau elemen kunci
-  // Pastikan ada elemen yang menandakan halaman login berhasil dimuat
-  // Misalnya heading "Login" atau form login
-  
-  // Mencari heading level 1 dengan nama "Login" atau teks serupa
-  // Sesuaikan selector ini dengan implementasi halaman login Anda
-  // Jika tidak yakin, kita bisa gunakan cek title halaman atau URL
-  
-  // Cek URL harus mengandung /auth/login
-  await expect(page).toHaveURL(/.*\/auth\/login/);
-  
-  // Cek title halaman (opsional, sesuaikan dengan metadata layout)
-  // await expect(page).toHaveTitle(/Login/);
+  const currentURL = page.url();
+  console.log(`[Smoke Test] Current URL: ${currentURL}`);
 
-  // Cek keberadaan elemen form login
-  // Gunakan selector yang lebih spesifik agar tidak ambigu dengan form lain (misal form social login)
-  // Kita cari form yang memiliki input password atau tombol submit
+  // Verify URL is /auth/login (guest should stay on login page)
+  await expect(page).toHaveURL(/.*\/auth\/login/);
+
+  // Verify login form is rendered
   const loginForm = page.locator('form').filter({ hasText: 'Sign in' }).first();
   await expect(loginForm).toBeVisible();
+  console.log('[Smoke Test] Login form is visible.');
 
-  // Verifikasi elemen kunci lainnya untuk memastikan render sempurna
+  // Verify heading is rendered
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  console.log('[Smoke Test] Login page loaded correctly.');
 });

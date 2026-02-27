@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Login Flow', () => {
+  // Ensure we start with a fresh session (though config handles this, explicit is better)
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test('should login successfully with valid admin credentials', async ({ page }) => {
     await page.goto('/auth/login');
 
