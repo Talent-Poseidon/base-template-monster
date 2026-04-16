@@ -347,10 +347,11 @@ jobs:
       # memblokir IP GitHub Actions → deploy tetap jalan, jalankan migrasi manual jika perlu
       - name: Run Prisma Migrations
         continue-on-error: true
+        timeout-minutes: 2
         run: pnpm prisma migrate deploy
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
       # Inspect Vercel project before deploying
       - name: Inspect Vercel project
