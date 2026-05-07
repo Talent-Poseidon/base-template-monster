@@ -24,6 +24,7 @@ export async function approveUser(userId: string) {
         data: { is_approved: true },
     });
     revalidatePath("/admin");
+    revalidatePath("/dashboard");
 }
 
 export async function revokeUser(userId: string) {
@@ -33,6 +34,7 @@ export async function revokeUser(userId: string) {
         data: { is_approved: false },
     });
     revalidatePath("/admin");
+    revalidatePath("/dashboard");
 }
 
 export async function toggleUserRole(userId: string) {

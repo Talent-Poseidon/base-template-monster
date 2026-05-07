@@ -50,22 +50,9 @@ export const { auth, signIn, signOut, handlers: { GET, POST } } = NextAuth({
         return true;
     },
     async jwt({ token, user }) {
-        // Initial sign in
         if (user) {
             token.role = user.role;
             token.is_approved = user.is_approved;
-        }
-        // Subsequent token updates - fetch fresh data from DB to check approval status
-        // This ensures if admin approves, user gets access without re-login (eventually)
-        if (token.sub) {
-             const dbUser = await prisma.user.findUnique({ 
-                 where: { id: token.sub },
-                 select: { is_approved: true, role: true }
-             });
-             if (dbUser) {
-                 token.is_approved = dbUser.is_approved;
-                 token.role = dbUser.role;
-             }
         }
         return token;
     },

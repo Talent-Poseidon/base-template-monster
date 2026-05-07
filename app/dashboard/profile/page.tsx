@@ -1,28 +1,10 @@
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
+"use client";
+
 import { ProfileCard } from "@/components/dashboard/profile-card";
-import { prisma } from "@/lib/prisma";
+import { useDashboardProfile } from "@/lib/dashboard-context";
 
-export default async function ProfilePage() {
-  const session = await auth();
-
-  if (!session?.user) redirect("/auth/login");
-
-  const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-  });
-
-  if (!user) redirect("/auth/login");
-
-  const profile = {
-      id: user.id,
-      email: user.email,
-      full_name: user.name,
-      avatar_url: user.image,
-      role: user.role,
-      is_approved: user.is_approved,
-      created_at: new Date().toISOString(),
-  };
+export default function ProfilePage() {
+  const profile = useDashboardProfile();
 
   return (
     <div>
@@ -32,7 +14,13 @@ export default async function ProfilePage() {
           Manage your personal information
         </p>
       </div>
-      <ProfileCard user={session.user} profile={profile} />
+      <ProfileCard
+        user={{ id: profile.id, email: profile.email }}
+        profile={{
+          ...profile,
+          created_at: profile.created_at || new Date().toISOString(),
+        }}
+      />
     </div>
   );
 }

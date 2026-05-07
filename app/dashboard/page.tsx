@@ -1,49 +1,29 @@
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
+"use client";
+
 import { Users, Shield, Clock, CheckCircle2 } from "lucide-react";
-import { prisma } from "@/lib/prisma";
+import { useDashboardProfile } from "@/lib/dashboard-context";
 
-export default async function DashboardPage() {
-  const session = await auth();
-
-  if (!session?.user) redirect("/auth/login");
-
-  const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-      include: { accounts: true }
-  });
-
-  if (!user) redirect("/auth/login");
-
-  const profile = {
-      id: user.id,
-      email: user.email,
-      full_name: user.name,
-      avatar_url: user.image,
-      role: user.role,
-      is_approved: user.is_approved,
-      provider: user.accounts[0]?.provider || "email",
-      created_at: new Date().toISOString(),
-  };
+export default function DashboardPage() {
+  const profile = useDashboardProfile();
 
   const stats = [
     {
       label: "Account Status",
-      value: profile?.is_approved ? "Approved" : "Pending",
-      icon: profile?.is_approved ? CheckCircle2 : Clock,
-      color: profile?.is_approved ? "text-primary" : "text-muted-foreground",
-      bgColor: profile?.is_approved ? "bg-primary/10" : "bg-muted",
+      value: profile.is_approved ? "Approved" : "Pending",
+      icon: profile.is_approved ? CheckCircle2 : Clock,
+      color: profile.is_approved ? "text-primary" : "text-muted-foreground",
+      bgColor: profile.is_approved ? "bg-primary/10" : "bg-muted",
     },
     {
       label: "Role",
-      value: profile?.role === "admin" ? "Administrator" : "User",
+      value: profile.role === "admin" ? "Administrator" : "User",
       icon: Shield,
-      color: profile?.role === "admin" ? "text-primary" : "text-muted-foreground",
-      bgColor: profile?.role === "admin" ? "bg-primary/10" : "bg-muted",
+      color: profile.role === "admin" ? "text-primary" : "text-muted-foreground",
+      bgColor: profile.role === "admin" ? "bg-primary/10" : "bg-muted",
     },
     {
       label: "Provider",
-      value: profile?.provider === "google" ? "Google" : "Email",
+      value: profile.provider === "google" ? "Google" : "Email",
       icon: Users,
       color: "text-muted-foreground",
       bgColor: "bg-muted",
@@ -54,7 +34,7 @@ export default async function DashboardPage() {
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-foreground">
-          Welcome back, {profile?.full_name || "User"}
+          Welcome back, {profile.full_name || "User"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {"Here's an overview of your account."}
@@ -94,14 +74,13 @@ export default async function DashboardPage() {
           <div>
             <p className="text-sm text-muted-foreground">Member since</p>
             <p className="mt-0.5 font-medium text-foreground">
-              {new Date(profile.created_at).toLocaleDateString(
-                "en-US",
-                {
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                }
-              )}
+              {profile.created_at
+                ? new Date(profile.created_at).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  })
+                : "N/A"}
             </p>
           </div>
           <div>
@@ -110,10 +89,7 @@ export default async function DashboardPage() {
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Last sign in</p>
-            <p className="mt-0.5 font-medium text-foreground">
-              {/* Prisma doesn't track last_sign_in_at by default unless we add it */}
-              Now
-            </p>
+            <p className="mt-0.5 font-medium text-foreground">Now</p>
           </div>
         </div>
       </div>

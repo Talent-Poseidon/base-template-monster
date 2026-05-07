@@ -1,7 +1,8 @@
-import React from "react"
+import React from "react";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { DashboardProvider } from "@/lib/dashboard-context";
 import { prisma } from "@/lib/prisma";
 
 export default async function DashboardLayout({
@@ -15,28 +16,35 @@ export default async function DashboardLayout({
     redirect("/auth/login");
   }
 
-  // Fetch fresh profile data
-  const user = await prisma.user.findUnique({
+  try {
+    const user = await prisma.user.findUnique({
       where: { email: session.user.email! },
-  });
+      include: { accounts: true },
+    });
 
-  if (!user) {
+    if (!user) {
       redirect("/auth/login");
-  }
+    }
 
-  // Adapter for DashboardShell
-  const profile = {
+    const profile = {
       id: user.id,
       email: user.email,
       full_name: user.name,
       avatar_url: user.image,
       role: user.role,
       is_approved: user.is_approved,
-  };
+      provider: user.accounts[0]?.provider || "email",
+      created_at: new Date().toISOString(),
+    };
 
-  return (
-    <DashboardShell user={session.user} profile={profile}>
-      {children}
-    </DashboardShell>
-  );
+    return (
+      <DashboardProvider profile={profile}>
+        <DashboardShell user={session.user} profile={profile}>
+          {children}
+        </DashboardShell>
+      </DashboardProvider>
+    );
+  } catch (error) {
+    throw error;
+  }
 }
