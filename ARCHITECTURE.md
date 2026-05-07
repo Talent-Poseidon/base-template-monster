@@ -78,6 +78,35 @@ This project is a modern full-stack web application built with **Next.js 16**, *
 - **Mantine:** Used for specific complex components or legacy support.
 - **Theming:** `components/providers/theme-provider.tsx` handles dark/light mode.
 
+## Navigation Structure
+
+### Main Navigation (Top Bar)
+- **File**: `components/dashboard/dashboard-shell.tsx`
+- **Komponen**: `DashboardShell` — shell layout untuk semua halaman post-login
+- **navItems array** (line 32-35): Mendefinisikan link navigasi utama
+  ```typescript
+  const navItems = [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/dashboard/profile", label: "Profile", icon: UserCircle },
+  ];
+  ```
+- **Admin link** (line 72-84): Ditampilkan conditional hanya jika `profile.role === "admin"`, mengarah ke `/admin`
+- **User menu dropdown** (line 88-142): Profile link + Admin Panel (conditional) + Sign out
+
+### Cara Menambah Navigasi Baru
+
+**Untuk fitur user biasa** (terlihat semua role):
+- Tambah entry baru ke `navItems` array di `dashboard-shell.tsx`
+- Format: `{ href: "/route-baru", label: "Label Menu", icon: NamaIcon }`
+- Icon menggunakan `lucide-react`
+
+**Untuk fitur admin-only**:
+- Tambah conditional link setelah block `{profile.role === "admin" && (...)}` yang sudah ada (line 72-84)
+- Atau tambah di dalam admin page sebagai sub-navigation
+
+**Untuk sub-navigation di dalam fitur**:
+- Buat layout file di route directory (misal `app/feature/layout.tsx`) dengan nav links internal
+
 ## Key Workflows
 
 ### Admin Setup
