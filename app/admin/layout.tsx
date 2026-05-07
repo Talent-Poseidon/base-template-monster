@@ -13,8 +13,15 @@ export default async function AdminLayout({
   const session = await auth();
 
   if (!session?.user) {
+    console.log("[admin:layout] no session, redirecting to login");
     redirect("/auth/login");
   }
+
+  console.log("[admin:layout] session found", {
+    userId: session.user.id,
+    email: session.user.email,
+    role: session.user.role,
+  });
 
   try {
     const user = await prisma.user.findUnique({
@@ -23,6 +30,11 @@ export default async function AdminLayout({
     });
 
     if (!user || user.role !== "admin") {
+      console.warn("[admin:layout] access denied, redirecting to dashboard", {
+        email: session.user.email,
+        userExists: !!user,
+        role: user?.role,
+      });
       redirect("/dashboard");
     }
 
@@ -45,6 +57,10 @@ export default async function AdminLayout({
       </DashboardProvider>
     );
   } catch (error) {
+    console.error("[admin:layout] Prisma query failed", {
+      error: error instanceof Error ? error.message : error,
+      email: session.user.email,
+    });
     throw error;
   }
 }

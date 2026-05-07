@@ -43,16 +43,23 @@ export const { auth, signIn, signOut, handlers: { GET, POST } } = NextAuth({
   ],
   callbacks: {
     async signIn({ user, account }) {
-        // Allow OAuth without password check.
-        // We do NOT block here based on approval, because blocking here 
-        // causes a generic "Sign in failed" error.
-        // Instead, we allow sign in, and let middleware redirect to /pending-approval
+        console.log("[auth:signIn]", {
+            userId: user?.id,
+            email: user?.email,
+            provider: account?.provider,
+            approved: (user as any)?.is_approved,
+        });
         return true;
     },
     async jwt({ token, user }) {
         if (user) {
             token.role = user.role;
             token.is_approved = user.is_approved;
+            console.log("[auth:jwt] initial token set", {
+                sub: token.sub,
+                role: token.role,
+                is_approved: token.is_approved,
+            });
         }
         return token;
     },

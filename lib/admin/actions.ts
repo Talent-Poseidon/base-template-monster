@@ -18,34 +18,48 @@ async function checkAdmin() {
 }
 
 export async function approveUser(userId: string) {
-    await checkAdmin();
+    const admin = await checkAdmin();
+    console.log("[admin:action] approveUser", { adminId: admin.id, targetUserId: userId });
     await prisma.user.update({
         where: { id: userId },
         data: { is_approved: true },
     });
+    console.log("[admin:action] user approved successfully", { userId });
     revalidatePath("/admin");
     revalidatePath("/dashboard");
 }
 
 export async function revokeUser(userId: string) {
-    await checkAdmin();
+    const admin = await checkAdmin();
+    console.log("[admin:action] revokeUser", { adminId: admin.id, targetUserId: userId });
     await prisma.user.update({
         where: { id: userId },
         data: { is_approved: false },
     });
+    console.log("[admin:action] user revoked successfully", { userId });
     revalidatePath("/admin");
     revalidatePath("/dashboard");
 }
 
 export async function toggleUserRole(userId: string) {
-    await checkAdmin();
+    const admin = await checkAdmin();
     const targetUser = await prisma.user.findUnique({ where: { id: userId } });
-    if (!targetUser) return;
+    if (!targetUser) {
+        console.warn("[admin:action] toggleUserRole — target user not found", { userId });
+        return;
+    }
 
     const newRole = targetUser.role === "admin" ? "user" : "admin";
+    console.log("[admin:action] toggleUserRole", {
+        adminId: admin.id,
+        targetUserId: userId,
+        oldRole: targetUser.role,
+        newRole,
+    });
     await prisma.user.update({
         where: { id: userId },
         data: { role: newRole },
     });
+    console.log("[admin:action] role toggled successfully", { userId, newRole });
     revalidatePath("/admin");
 }

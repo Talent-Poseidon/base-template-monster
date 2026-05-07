@@ -13,8 +13,14 @@ export default async function DashboardLayout({
   const session = await auth();
 
   if (!session?.user) {
+    console.log("[dashboard:layout] no session, redirecting to login");
     redirect("/auth/login");
   }
+
+  console.log("[dashboard:layout] session found", {
+    userId: session.user.id,
+    email: session.user.email,
+  });
 
   try {
     const user = await prisma.user.findUnique({
@@ -23,6 +29,9 @@ export default async function DashboardLayout({
     });
 
     if (!user) {
+      console.warn("[dashboard:layout] user not found in DB, redirecting to login", {
+        email: session.user.email,
+      });
       redirect("/auth/login");
     }
 
@@ -45,6 +54,10 @@ export default async function DashboardLayout({
       </DashboardProvider>
     );
   } catch (error) {
+    console.error("[dashboard:layout] Prisma query failed", {
+      error: error instanceof Error ? error.message : error,
+      email: session.user.email,
+    });
     throw error;
   }
 }
