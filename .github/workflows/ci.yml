@@ -353,6 +353,20 @@ jobs:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
+      # Buat default admin user di database (idempotent)
+      # Hanya jalan jika DEFAULT_ADMIN_EMAIL + DEFAULT_ADMIN_PASSWORD
+      # di-set di GitHub Org Secrets
+      - name: Setup Default Admin
+        continue-on-error: true
+        timeout-minutes: 1
+        run: pnpm prisma generate && pnpm tsx scripts/setup-default-admin.ts
+        env:
+          DATABASE_URL: ${{ secrets.DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
+          DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
+          DEFAULT_ADMIN_NAME: ${{ secrets.DEFAULT_ADMIN_NAME }}
+
       # Inspect Vercel project before deploying
       - name: Inspect Vercel project
         env:
