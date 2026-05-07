@@ -1,33 +1,63 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
 import { TextInput, PasswordInput, Button, Divider, Alert } from "@mantine/core";
 import { AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { signInWithEmail, signInWithGoogle } from "@/lib/auth/actions";
 import { GoogleIcon } from "@/components/icons/google-icon";
 
+function EmailSubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      type="submit"
+      fullWidth
+      size="md"
+      loading={pending}
+      className="bg-primary text-primary-foreground hover:bg-primary/90"
+    >
+      Sign in
+    </Button>
+  );
+}
+
+function GoogleSubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      type="submit"
+      variant="outline"
+      fullWidth
+      size="md"
+      loading={pending}
+      leftSection={<GoogleIcon className="h-4 w-4 bg-transparent" />}
+      classNames={{
+        root: "border-border text-foreground hover:bg-muted",
+      }}
+    >
+      Sign in with Google
+    </Button>
+  );
+}
+
 export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
   async function handleEmailLogin(formData: FormData) {
-    setLoading(true);
     setError(null);
     const result = await signInWithEmail(formData);
     if (result?.error) {
       setError(result.error);
-      setLoading(false);
     }
   }
 
   async function handleGoogleLogin() {
-    setLoading(true);
     setError(null);
     const result = await signInWithGoogle();
     if (result?.error) {
       setError(result.error);
-      setLoading(false);
     }
   }
 
@@ -71,15 +101,7 @@ export function LoginForm() {
               input: "bg-background border-border text-foreground",
             }}
           />
-          <Button
-            type="submit"
-            fullWidth
-            size="md"
-            loading={loading}
-            className="bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            Sign in
-          </Button>
+          <EmailSubmitButton />
         </div>
       </form>
 
@@ -91,19 +113,7 @@ export function LoginForm() {
       />
 
       <form action={handleGoogleLogin}>
-        <Button
-          type="submit"
-          variant="outline"
-          fullWidth
-          size="md"
-          loading={loading}
-          leftSection={<GoogleIcon className="h-4 w-4 bg-transparent" />}
-          classNames={{
-            root: "border-border text-foreground hover:bg-muted",
-          }}
-        >
-          Sign in with Google
-        </Button>
+        <GoogleSubmitButton />
       </form>
 
       <p className="mt-6 text-center text-sm text-muted-foreground">

@@ -6,19 +6,12 @@ import { prisma } from "@/lib/prisma";
 export default async function AdminPage() {
   const session = await auth();
 
-  if (!session?.user) redirect("/auth/login");
+  if (!session?.user || session.user.role !== "admin") redirect("/dashboard");
 
-  // Double check role from DB to be safe
-  const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-  });
-
-  if (!user || user.role !== "admin") redirect("/dashboard");
-
-  // Fetch all users
+  // Fetch all users (admin role already verified by layout + middleware)
   const users = await prisma.user.findMany({
-      orderBy: { id: 'desc' }, // created_at not in schema, use id or add created_at
-      include: { accounts: true }, // to check provider
+      orderBy: { id: 'desc' },
+      include: { accounts: true },
   });
 
   // Map to format expected by table
@@ -30,7 +23,7 @@ export default async function AdminPage() {
       role: u.role,
       is_approved: u.is_approved,
       provider: u.accounts[0]?.provider || "email",
-      created_at: new Date().toISOString(), // Schema doesnt have created_at yet
+      created_at: new Date().toISOString(),
   }));
 
   return (
@@ -41,7 +34,7 @@ export default async function AdminPage() {
           Approve or manage user accounts. Users who sign in with Google need approval before they can access the app.
         </p>
       </div>
-      <AdminUserTable users={formattedUsers} currentUserId={user.id} />
+      <AdminUserTable users={formattedUsers} currentUserId={session.user.id} />
     </div>
   );
 }
