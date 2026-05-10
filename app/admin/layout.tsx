@@ -61,6 +61,30 @@ export default async function AdminLayout({
       error: error instanceof Error ? error.message : error,
       email: session.user.email,
     });
-    throw error;
+
+    // If DB is unreachable, we can't verify admin role from DB.
+    // Fallback: trust JWT role claim (already validated by proxy.ts)
+    if (session.user.role !== "admin") {
+      redirect("/dashboard");
+    }
+
+    const fallbackProfile = {
+      id: session.user.id || "",
+      email: session.user.email || null,
+      full_name: session.user.name || null,
+      avatar_url: session.user.image || null,
+      role: session.user.role || "admin",
+      is_approved: session.user.is_approved ?? true,
+      provider: "unknown",
+      created_at: new Date().toISOString(),
+    };
+
+    return (
+      <DashboardProvider profile={fallbackProfile}>
+        <DashboardShell user={session.user} profile={fallbackProfile}>
+          {children}
+        </DashboardShell>
+      </DashboardProvider>
+    );
   }
 }

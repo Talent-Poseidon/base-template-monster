@@ -58,6 +58,26 @@ export default async function DashboardLayout({
       error: error instanceof Error ? error.message : error,
       email: session.user.email,
     });
-    throw error;
+
+    // Graceful fallback: render dashboard with session-only data
+    // instead of throwing 500 to the user
+    const fallbackProfile = {
+      id: session.user.id || "",
+      email: session.user.email || null,
+      full_name: session.user.name || null,
+      avatar_url: session.user.image || null,
+      role: session.user.role || "user",
+      is_approved: session.user.is_approved ?? true,
+      provider: "unknown",
+      created_at: new Date().toISOString(),
+    };
+
+    return (
+      <DashboardProvider profile={fallbackProfile}>
+        <DashboardShell user={session.user} profile={fallbackProfile}>
+          {children}
+        </DashboardShell>
+      </DashboardProvider>
+    );
   }
 }

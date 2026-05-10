@@ -8,22 +8,41 @@ export default async function AdminPage() {
 
   if (!session?.user) redirect("/dashboard");
 
-  // Fetch all users (admin role already verified by layout)
-  const users = await prisma.user.findMany({
-    orderBy: { id: "desc" },
-    include: { accounts: true },
-  });
+  let formattedUsers: {
+    id: string;
+    email: string | null;
+    full_name: string | null;
+    avatar_url: string | null;
+    role: string;
+    is_approved: boolean;
+    provider: string;
+    created_at: string;
+  }[] = [];
 
-  const formattedUsers = users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    full_name: u.name,
-    avatar_url: u.image,
-    role: u.role,
-    is_approved: u.is_approved,
-    provider: u.accounts[0]?.provider || "email",
-    created_at: new Date().toISOString(),
-  }));
+  let queryError: string | null = null;
+
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { id: "desc" },
+      include: { accounts: true },
+    });
+
+    formattedUsers = users.map((u) => ({
+      id: u.id,
+      email: u.email,
+      full_name: u.name,
+      avatar_url: u.image,
+      role: u.role,
+      is_approved: u.is_approved,
+      provider: u.accounts[0]?.provider || "email",
+      created_at: new Date().toISOString(),
+    }));
+  } catch (error) {
+    console.error("[admin:page] Prisma findMany failed", {
+      error: error instanceof Error ? error.message : error,
+    });
+    queryError = error instanceof Error ? error.message : "Database query failed";
+  }
 
   return (
     <div>
@@ -34,7 +53,16 @@ export default async function AdminPage() {
           approval before they can access the app.
         </p>
       </div>
-      <AdminUserTable users={formattedUsers} currentUserId={session.user.id} />
+      {queryError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6">
+          <p className="text-sm font-medium text-red-800">
+            Failed to load users. Please refresh the page.
+          </p>
+          <p className="mt-1 text-xs text-red-600">{queryError}</p>
+        </div>
+      ) : (
+        <AdminUserTable users={formattedUsers} currentUserId={session.user.id} />
+      )}
     </div>
   );
 }
