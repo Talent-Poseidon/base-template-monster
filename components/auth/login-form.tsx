@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useRouter } from "next/navigation";
 import { TextInput, PasswordInput, Button, Divider, Alert } from "@mantine/core";
 import { AlertCircle } from "lucide-react";
 import Link from "next/link";
@@ -43,13 +44,22 @@ function GoogleSubmitButton() {
 }
 
 export function LoginForm() {
+  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
 
   async function handleEmailLogin(formData: FormData) {
     setError(null);
+    console.log("[login-form] submitting login...");
     const result = await signInWithEmail(formData);
+    console.log("[login-form] server action returned:", JSON.stringify(result));
     if (result?.error) {
       setError(result.error);
+    } else if (result?.success) {
+      console.log("[login-form] login success, navigating to /dashboard");
+      router.push("/dashboard");
+    } else {
+      console.error("[login-form] unexpected result:", result);
+      setError("Terjadi kesalahan. Silakan coba lagi.");
     }
   }
 

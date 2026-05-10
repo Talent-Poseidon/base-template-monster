@@ -6,15 +6,21 @@ import bcrypt from "bcryptjs";
 import { AuthError } from "next-auth";
 
 export async function signInWithEmail(formData: FormData) {
+  const email = formData.get("email") as string;
+  console.log("[auth:action] signInWithEmail called", { email });
+
   try {
-    await signIn("credentials", {
-      email: formData.get("email"),
+    const result = await signIn("credentials", {
+      email,
       password: formData.get("password"),
-      redirectTo: "/dashboard",
+      redirect: false,
     });
+    console.log("[auth:action] signIn succeeded", { email, result: typeof result });
+    return { success: true };
   } catch (error) {
     if (error instanceof AuthError) {
-      console.error("[auth:action] signInWithEmail error", {
+      console.error("[auth:action] AuthError", {
+        email,
         type: error.type,
         message: error.message,
       });
@@ -22,9 +28,14 @@ export async function signInWithEmail(formData: FormData) {
         case "CredentialsSignin":
           return { error: "Email atau password salah." };
         default:
-          return { error: `Login gagal. Silakan coba lagi.` };
+          return { error: "Login gagal. Silakan coba lagi." };
       }
     }
+    console.error("[auth:action] Unexpected error", {
+      email,
+      name: error instanceof Error ? error.name : "Unknown",
+      message: error instanceof Error ? error.message : String(error),
+    });
     throw error;
   }
 }
