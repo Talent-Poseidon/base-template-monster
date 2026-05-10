@@ -14,11 +14,15 @@ export async function signInWithEmail(formData: FormData) {
     });
   } catch (error) {
     if (error instanceof AuthError) {
+      console.error("[auth:action] signInWithEmail error", {
+        type: error.type,
+        message: error.message,
+      });
       switch (error.type) {
         case "CredentialsSignin":
-          return { error: "Invalid credentials or account not approved." };
+          return { error: "Email atau password salah." };
         default:
-          return { error: "Something went wrong." };
+          return { error: `Login gagal. Silakan coba lagi.` };
       }
     }
     throw error;

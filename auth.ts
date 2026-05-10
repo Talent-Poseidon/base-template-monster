@@ -23,21 +23,36 @@ export const { auth, signIn, signOut, handlers: { GET, POST } } = NextAuth({
           .object({ email: z.string().email(), password: z.string().min(6) })
           .safeParse(credentials);
 
-        if (parsedCredentials.success) {
-          const { email, password } = parsedCredentials.data;
-          const user = await prisma.user.findUnique({ where: { email } });
-          if (!user) return null;
-          
-          const passwordsMatch = await bcrypt.compare(password, user.password || "");
-          if (passwordsMatch) {
-              // We return the user even if not approved, 
-              // middleware will handle the redirection to pending page.
-              return user;
-          }
+        if (!parsedCredentials.success) {
+          console.log("[auth:authorize] Invalid input format");
+          return null;
         }
 
-        console.log("Invalid credentials");
-        return null;
+        const { email, password } = parsedCredentials.data;
+
+        try {
+          const user = await prisma.user.findUnique({ where: { email } });
+          if (!user) {
+            console.log("[auth:authorize] User not found", { email });
+            return null;
+          }
+
+          const passwordsMatch = await bcrypt.compare(password, user.password || "");
+          if (!passwordsMatch) {
+            console.log("[auth:authorize] Password mismatch", { email });
+            return null;
+          }
+
+          console.log("[auth:authorize] Success", { email, role: user.role, approved: user.is_approved });
+          return user;
+        } catch (error) {
+          console.error("[auth:authorize] DB ERROR", {
+            name: error instanceof Error ? error.name : "Unknown",
+            message: error instanceof Error ? error.message : String(error),
+            email,
+          });
+          return null;
+        }
       },
     }),
   ],
