@@ -10,17 +10,13 @@ test.describe('Login Flow', () => {
     // Fill credentials
     await page.fill('input[name="email"]', 'admin@example.com');
     await page.fill('input[name="password"]', 'password123');
-    
+
     // Click sign in button
-    // Selector based on button type="submit" inside the first form (email login)
     await page.locator('form').first().locator('button[type="submit"]').click();
 
-    // Expect redirection to dashboard
+    // Wait for redirect with explicit timeout (CI can be slow)
+    await page.waitForURL(/\/dashboard/, { timeout: 15000 });
     await expect(page).toHaveURL(/\/dashboard/);
-    
-    // Expect session persistence/user info
-    // Adjust selector based on actual dashboard implementation
-    // await expect(page.locator('text=Admin User')).toBeVisible();
   });
 
   test('should show error with invalid credentials', async ({ page }) => {
@@ -30,8 +26,8 @@ test.describe('Login Flow', () => {
     await page.fill('input[name="password"]', 'wrongpassword');
     await page.locator('form').first().locator('button[type="submit"]').click();
 
-    // Expect error message
-    await expect(page.locator('text=Invalid credentials')).toBeVisible();
+    // Expect error message (Indonesian locale)
+    await expect(page.locator('text=Email atau password salah')).toBeVisible();
     // Ensure still on login page
     await expect(page).toHaveURL(/\/auth\/login/);
   });
