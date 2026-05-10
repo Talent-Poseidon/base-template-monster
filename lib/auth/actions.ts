@@ -31,12 +31,16 @@ export async function signInWithEmail(formData: FormData) {
           return { error: "Login gagal. Silakan coba lagi." };
       }
     }
+    // Re-throw Next.js internal redirect errors (they use .digest property)
+    if (error && typeof error === "object" && "digest" in error) {
+      throw error;
+    }
     console.error("[auth:action] Unexpected error", {
       email,
       name: error instanceof Error ? error.name : "Unknown",
       message: error instanceof Error ? error.message : String(error),
     });
-    throw error;
+    return { error: "Terjadi kesalahan. Silakan coba lagi." };
   }
 }
 

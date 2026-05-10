@@ -31,4 +31,30 @@ test.describe('Login Flow', () => {
     // Ensure still on login page
     await expect(page).toHaveURL(/\/auth\/login/);
   });
+
+  test('should re-login successfully after logout', async ({ page }) => {
+    // Step 1: Login
+    await page.goto('/auth/login');
+    await page.fill('input[name="email"]', 'admin@example.com');
+    await page.fill('input[name="password"]', 'password123');
+    await page.locator('form').first().locator('button[type="submit"]').click();
+    await page.waitForURL(/\/dashboard/, { timeout: 15000 });
+
+    // Step 2: Logout via sign-out button in user menu
+    await page.locator('header button').last().click(); // Open user menu
+    await page.locator('button:has-text("Sign out")').click();
+
+    // Wait for redirect back to login page
+    await page.waitForURL(/\/auth\/login/, { timeout: 15000 });
+    await expect(page).toHaveURL(/\/auth\/login/);
+
+    // Step 3: Re-login with same credentials
+    await page.fill('input[name="email"]', 'admin@example.com');
+    await page.fill('input[name="password"]', 'password123');
+    await page.locator('form').first().locator('button[type="submit"]').click();
+
+    // Should redirect to dashboard again
+    await page.waitForURL(/\/dashboard/, { timeout: 15000 });
+    await expect(page).toHaveURL(/\/dashboard/);
+  });
 });
