@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useFormStatus } from "react-dom";
 import { TextInput, PasswordInput, Button, Divider, Alert } from "@mantine/core";
 import { AlertCircle } from "lucide-react";
@@ -44,14 +45,15 @@ function GoogleSubmitButton() {
 
 export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   async function handleEmailLogin(formData: FormData) {
     setError(null);
-    // On success, signInWithEmail redirects server-side (never returns).
-    // It only returns when there's an error.
     const result = await signInWithEmail(formData);
     if (result?.error) {
       setError(result.error);
+    } else if (result?.success) {
+      router.push("/dashboard");
     }
   }
 

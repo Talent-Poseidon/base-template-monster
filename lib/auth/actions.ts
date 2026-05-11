@@ -13,9 +13,15 @@ export async function signInWithEmail(formData: FormData) {
     await signIn("credentials", {
       email,
       password: formData.get("password"),
-      redirectTo: "/dashboard",
+      redirect: false,
     });
+    return { success: true };
   } catch (error) {
+    // NextAuth v5 beta: signIn with redirect:false can still throw
+    // NEXT_REDIRECT internally. Detect via error.digest and treat as success.
+    if (error && typeof error === "object" && "digest" in error) {
+      return { success: true };
+    }
     if (error instanceof AuthError) {
       console.error("[auth:action] AuthError", {
         email,
@@ -29,8 +35,7 @@ export async function signInWithEmail(formData: FormData) {
           return { error: "Login gagal. Silakan coba lagi." };
       }
     }
-    // Re-throw Next.js internal errors (redirects, etc.)
-    throw error;
+    return { error: "Terjadi kesalahan. Silakan coba lagi." };
   }
 }
 
