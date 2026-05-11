@@ -10,13 +10,11 @@ export async function signInWithEmail(formData: FormData) {
   console.log("[auth:action] signInWithEmail called", { email });
 
   try {
-    const result = await signIn("credentials", {
+    await signIn("credentials", {
       email,
       password: formData.get("password"),
-      redirect: false,
+      redirectTo: "/dashboard",
     });
-    console.log("[auth:action] signIn succeeded", { email, result: typeof result });
-    return { success: true };
   } catch (error) {
     if (error instanceof AuthError) {
       console.error("[auth:action] AuthError", {
@@ -31,16 +29,8 @@ export async function signInWithEmail(formData: FormData) {
           return { error: "Login gagal. Silakan coba lagi." };
       }
     }
-    // Re-throw Next.js internal redirect errors (they use .digest property)
-    if (error && typeof error === "object" && "digest" in error) {
-      throw error;
-    }
-    console.error("[auth:action] Unexpected error", {
-      email,
-      name: error instanceof Error ? error.name : "Unknown",
-      message: error instanceof Error ? error.message : String(error),
-    });
-    return { error: "Terjadi kesalahan. Silakan coba lagi." };
+    // Re-throw Next.js internal errors (redirects, etc.)
+    throw error;
   }
 }
 

@@ -66,14 +66,16 @@ export const { auth, signIn, signOut, handlers: { GET, POST } } = NextAuth({
         });
         return true;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
         if (user) {
             token.role = user.role;
             token.is_approved = user.is_approved;
+            token.provider = account?.provider || "email";
             console.log("[auth:jwt] initial token set", {
                 sub: token.sub,
                 role: token.role,
                 is_approved: token.is_approved,
+                provider: token.provider,
             });
         }
         return token;
@@ -84,6 +86,7 @@ export const { auth, signIn, signOut, handlers: { GET, POST } } = NextAuth({
             session.user.email = token.email as string;
             session.user.role = token.role as string;
             session.user.is_approved = token.is_approved as boolean;
+            session.user.provider = token.provider as string;
         }
         return session;
     }
