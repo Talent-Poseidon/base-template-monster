@@ -48,18 +48,41 @@ export function LoginForm() {
   const router = useRouter();
 
   async function handleEmailLogin(formData: FormData) {
+    const email = formData.get("email") as string;
+    console.log("[login-form] handleEmailLogin START", { email });
     setError(null);
-    const result = await signInWithEmail(formData);
-    if (result?.error) {
-      setError(result.error);
-    } else if (result?.success) {
-      router.push("/dashboard");
+    try {
+      const result = await signInWithEmail(formData);
+      console.log("[login-form] signInWithEmail returned", { result });
+      if (result?.error) {
+        setError(result.error);
+      } else if (result?.success) {
+        console.log("[login-form] login success, pushing to /dashboard");
+        router.push("/dashboard");
+      }
+    } catch (err) {
+      console.error("[login-form] handleEmailLogin CAUGHT ERROR", {
+        name: err instanceof Error ? err.name : "Unknown",
+        message: err instanceof Error ? err.message : String(err),
+        digest: (err as any)?.digest,
+      });
+      setError("Terjadi kesalahan. Silakan coba lagi.");
     }
   }
 
   async function handleGoogleLogin() {
+    console.log("[login-form] handleGoogleLogin START");
     setError(null);
-    await signInWithGoogle();
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      console.error("[login-form] handleGoogleLogin CAUGHT ERROR", {
+        name: err instanceof Error ? err.name : "Unknown",
+        message: err instanceof Error ? err.message : String(err),
+        digest: (err as any)?.digest,
+      });
+      setError("Terjadi kesalahan. Silakan coba lagi.");
+    }
   }
 
   return (

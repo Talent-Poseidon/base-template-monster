@@ -10,6 +10,13 @@ export default function DashboardError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  console.error("[dashboard:error] Error boundary triggered", {
+    name: error.name,
+    message: error.message,
+    digest: error.digest,
+    stack: error.stack?.split("\n").slice(0, 3).join(" | "),
+  });
+
   return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-50">
