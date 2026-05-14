@@ -267,6 +267,10 @@ jobs:
           DATABASE_URL: "postgresql://postgres:password@localhost:5432/mydb"
           DIRECT_URL: "postgresql://postgres:password@localhost:5432/mydb"
 
+      # Generate Prisma Client — diperlukan karena migrate deploy tidak auto-generate
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
       - name: Seed Database
         run: pnpm prisma db seed
         env:
