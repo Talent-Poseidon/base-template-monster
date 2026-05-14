@@ -17,11 +17,14 @@ jobs:
       should_skip: ${{ steps.check.outputs.should_skip }}
     steps:
       - id: check
+        env:
+          GH_ACTOR: ${{ github.actor }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [[ "${{ github.actor }}" == "github-actions[bot]" ]]; then
+          if [[ "$GH_ACTOR" == "github-actions[bot]" ]]; then
             echo "Skipping CI — triggered by github-actions[bot]"
             echo "should_skip=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event.head_commit.message }}" == *"[skip ci]"* ]]; then
+          elif [[ "$COMMIT_MSG" == *"[skip ci]"* ]]; then
             echo "Skipping CI — commit message contains [skip ci]"
             echo "should_skip=true" >> $GITHUB_OUTPUT
           else
