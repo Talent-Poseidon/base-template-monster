@@ -137,16 +137,26 @@ jobs:
           DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db"
           DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db"
         run: |
-          # exit code 0 = no drift, non-zero = has drift
-          if npx prisma migrate diff \
-            --from-migrations ./prisma/migrations \
+          # --from-url: diff dari database state (sudah punya semua existing migrations)
+          # --to-schema-datamodel: diff ke target schema file
+          # exit code 0 = no diff, exit code 2 = has diff, exit code 1 = error
+          set +e
+          npx prisma migrate diff \
+            --from-url "$DATABASE_URL" \
             --to-schema-datamodel ./prisma/schema.prisma \
-            --exit-code; then
+            --exit-code
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -eq 0 ]; then
             echo "No schema drift detected"
             echo "has_drift=false" >> $GITHUB_OUTPUT
-          else
+          elif [ $EXIT_CODE -eq 2 ]; then
             echo "Schema drift detected — migration needed"
             echo "has_drift=true" >> $GITHUB_OUTPUT
+          else
+            echo "::error::prisma migrate diff failed with exit code $EXIT_CODE"
+            exit 1
           fi
 
       - name: Generate migration via diff --script
@@ -160,8 +170,9 @@ jobs:
           mkdir -p "$MIGRATION_DIR"
 
           # Generate SQL menggunakan migrate diff --script (NON-INTERACTIVE)
+          # --from-url: gunakan database state (existing migrations sudah di-apply)
           npx prisma migrate diff \
-            --from-migrations ./prisma/migrations \
+            --from-url "$DATABASE_URL" \
             --to-schema-datamodel ./prisma/schema.prisma \
             --script > "$MIGRATION_DIR/migration.sql"
 
