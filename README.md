@@ -130,3 +130,50 @@ How to set: GitHub repo or org → Settings → Secrets and variables → Action
 **Recommended migration path**:
 1. Start with shared Supabase + `ENFORCE_DRIFT_CHECK=false` (or unset).
 2. When scaling to paid Supabase with dedicated projects per app, set `ENFORCE_DRIFT_CHECK=true` org-wide or per-repo. No code change needed.
+
+### Per-Project Schema Isolation
+
+For setups where **multiple projects share a single Supabase project** (common on free tier), each project's tables are automatically isolated into its own Postgres schema, derived from the GitHub repo name. This prevents cross-project DDL collision when two projects independently define the same model name (e.g. both add a `StandarJabatan` table).
+
+**Schema name derivation** happens at CI runtime — no per-project config needed:
+
+```
+schema_name = "proj_" + lowercase(repo_name).replace(/[^a-z0-9]/g, '_').slice(0, 50)
+              + "_" + sha256(<org>/<repo>).slice(0, 6)
+
+# Examples:
+# Talent-Poseidon/new-project-v3      → proj_new_project_v3_aec706
+# Talent-Poseidon/base-template-monster → proj_base_template_monster_21b6f7
+```
+
+The 6-char hash suffix ensures `Client-App` and `client_app` (both normalize to `client_app`) map to different schemas, so renames or near-duplicates won't collide.
+
+**What the CI does for you**:
+- Derives schema name from `github.repository`.
+- Upserts `?schema=<name>` into `DATABASE_URL`, `DIRECT_URL`, and `STAGING_DIRECT_URL` env vars at runtime (idempotent — replaces any existing `?schema=` param).
+- Runs `CREATE SCHEMA IF NOT EXISTS "<name>"` against Supabase before `prisma migrate deploy`.
+- Pre-creates the same schema in the ephemeral CI Postgres so that `prisma migrate diff` (for drift detection) operates in the same scope.
+- Propagates the schema-suffixed URLs to Vercel runtime env vars during deploy, so the running app queries its own schema.
+
+**Consequences (all automatic)**:
+- `_prisma_migrations` table lives in each project's schema → **no cross-app P3009 cascade**.
+- Drift detection scopes to each project's schema → sibling apps' migrations don't show up as drift.
+- Two projects can define identical models → tables go to separate schemas, no `relation already exists` errors.
+
+**You do NOT need to**:
+- Update `prisma/schema.prisma` (URL parameter handles routing).
+- Add `?schema=` to GitHub Secrets (CI appends at runtime).
+- Coordinate schema names across projects (derived deterministically).
+
+**Local development** uses whatever schema is in your local `.env` (default `public`) — local DB is separate from shared Supabase, so isolation isn't needed there.
+
+**Cleanup test schemas** (after intensive testing in a shared Supabase):
+```sql
+-- List all project schemas
+SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'proj_%';
+
+-- Drop a specific test project's schema and all its tables
+DROP SCHEMA "proj_test_repo_xxxxxx" CASCADE;
+```
+
+**Backward compatibility**: existing projects already deployed to `public` schema continue to work. They will create a NEW schema on next CI run (their tables in `public` become orphan but don't cause errors). To migrate fully, drop the public-schema tables manually after verifying the new schema has the same data, or rebuild from scratch.
