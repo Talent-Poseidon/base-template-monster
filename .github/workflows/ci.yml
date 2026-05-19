@@ -169,7 +169,7 @@ jobs:
 
           # Marker 1: failed migration in Supabase (selalu aktif — P3009 affects all apps)
           if echo "$STATUS_OUT" | grep -qE 'prisma migrate resolve --rolled-back'; then
-            FAILED_NAME=$(echo "$STATUS_OUT" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            FAILED_NAME=$(echo "$STATUS_OUT" | sed -nE "s/.*migrate resolve --rolled-back[[:space:]]+[\"']?([A-Za-z0-9_]+)[\"']?.*/\1/p" | head -1)
             echo "::error::[STAGING_DB_STATE_ERROR] Supabase punya failed migration: ${FAILED_NAME:-<unknown>}"
             echo "::error::AKSI MANUAL DIPERLUKAN:"
             echo "::error::  1. Verifikasi state DB di Supabase dashboard"
@@ -619,7 +619,7 @@ jobs:
           echo "$STATUS_OUT"
 
           if echo "$STATUS_OUT" | grep -qE 'prisma migrate resolve --rolled-back'; then
-            FAILED_NAME=$(echo "$STATUS_OUT" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            FAILED_NAME=$(echo "$STATUS_OUT" | sed -nE "s/.*migrate resolve --rolled-back[[:space:]]+[\"']?([A-Za-z0-9_]+)[\"']?.*/\1/p" | head -1)
             echo "Detected failed migration: ${FAILED_NAME:-<unknown>}"
 
             if [ -z "$FAILED_NAME" ]; then
@@ -679,7 +679,7 @@ jobs:
           echo "$STATUS_OUT_POST"
 
           if echo "$STATUS_OUT_POST" | grep -qE 'prisma migrate resolve --rolled-back'; then
-            FAILED_AFTER=$(echo "$STATUS_OUT_POST" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            FAILED_AFTER=$(echo "$STATUS_OUT_POST" | sed -nE "s/.*migrate resolve --rolled-back[[:space:]]+[\"']?([A-Za-z0-9_]+)[\"']?.*/\1/p" | head -1)
             echo "::error::[STAGING_DB_STATE_ERROR] Apply selesai tapi state masih punya failed migration: ${FAILED_AFTER:-<unknown>}. Butuh investigasi manual."
             exit 1
           fi
