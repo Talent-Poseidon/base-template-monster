@@ -121,6 +121,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ── Per-Project Schema Isolation — Derive ──────────────────────────
+      # Setiap project (clone dari template) di-isolasi ke Postgres schema
+      # sendiri di shared Supabase, untuk mencegah collision saat 2+ project
+      # menambah model bernama sama (mis. dua project sama-sama add
+      # `StandarJabatan`). Schema name diturunkan deterministik dari nama
+      # repo + hash 6-char untuk anti-collision (mis. "Client-App" vs
+      # "client_app" map ke schema berbeda).
+      - name: Derive project schema name
+        run: |
+          REPO_FULL="${{ github.repository }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          NORMALIZED=$(echo "$REPO_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9]/_/g' \
+            | sed -E 's/_+/_/g' \
+            | sed -E 's/^_+|_+$//g' \
+            | cut -c1-50)
+          HASH=$(echo -n "$REPO_FULL" | shasum -a 256 | cut -c1-6)
+          SCHEMA="proj_${NORMALIZED}_${HASH}"
+          echo "Derived project schema: ${SCHEMA}"
+          echo "SCHEMA=${SCHEMA}" >> $GITHUB_ENV
+
       # ── Step 0: Validate STAGING_DIRECT_URL (PASTI Plan v3 — Change 1) ──
       # Migration butuh direct connection. Pooler / transaction-pool URL
       # menyebabkan partial-apply yang historically jadi sumber P3009.
@@ -146,14 +168,54 @@ jobs:
           fi
           echo "STAGING_DIRECT_URL valid (direct connection)."
 
+      # ── Per-Project Schema Isolation — Inject schema suffix ───────────
+      # Append `?schema=$SCHEMA` ke STAGING_DIRECT_URL (upsert: replace
+      # existing schema= param kalau ada). Override secret value untuk
+      # downstream step via $GITHUB_ENV.
+      - name: Inject schema into Supabase URL
+        env:
+          BASE_STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+        run: |
+          upsert_schema() {
+            local url="$1" schema="$2"
+            [ -z "$url" ] && echo "" && return
+            url=$(echo "$url" | sed -E 's/[?&]schema=[^&]*//' | sed -E 's/\?&/?/' | sed -E 's/\?$//')
+            if echo "$url" | grep -q '?'; then
+              echo "${url}&schema=${schema}"
+            else
+              echo "${url}?schema=${schema}"
+            fi
+          }
+          NEW_URL=$(upsert_schema "$BASE_STAGING_DIRECT_URL" "$SCHEMA")
+          # Jangan echo full URL — kandungan password. Cuma konfirmasi.
+          echo "Injected schema=${SCHEMA} into STAGING_DIRECT_URL"
+          echo "STAGING_DIRECT_URL=${NEW_URL}" >> $GITHUB_ENV
+
+      # ── Per-Project Schema Isolation — Ensure schema exists ───────────
+      # Idempotent CREATE SCHEMA IF NOT EXISTS. Aman re-run.
+      # Operation level statement, tidak terpengaruh search_path.
+      - name: Ensure Supabase schema exists
+        env:
+          DATABASE_URL: ${{ env.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ env.STAGING_DIRECT_URL }}
+        run: |
+          cat > /tmp/create_schema.sql <<SQL
+          CREATE SCHEMA IF NOT EXISTS "${SCHEMA}";
+          SQL
+          npx prisma db execute --file /tmp/create_schema.sql --schema prisma/schema.prisma
+          echo "Schema ${SCHEMA} verified/created in Supabase."
+
       # ── Step 1: Pre-flight Supabase state (PASTI Plan v3 — Change 1) ────
       # Cek failed migration / drift di Supabase SEBELUM generate SQL.
       # Pakai 'prisma migrate resolve --rolled-back' sebagai canonical marker
       # (Prisma selalu emit suggestion ini kalau ada failed migration).
+      # NOTE: pakai env.STAGING_DIRECT_URL (yang sudah di-suffix dengan
+      # ?schema=) bukan secret langsung, supaya pre-flight scope ke schema
+      # project, bukan public.
       - name: Pre-flight Supabase migration state
         env:
-          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
-          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DATABASE_URL: ${{ env.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ env.STAGING_DIRECT_URL }}
           # Default false untuk kompatibilitas shared-Supabase setup (free tier dengan
           # 1 Supabase shared lintas app). Set ke "true" di repo/org variables saat
           # sudah migrate ke 1 app = 1 Supabase project untuk re-enable strict drift block.
@@ -206,17 +268,29 @@ jobs:
             sleep 2
           done
 
+      # ── Per-Project Schema Isolation — Ephemeral schema ──────────────
+      # CI runner Postgres juga di-bagi schema agar prisma migrate operations
+      # konsisten dengan Supabase. Tanpa step ini, diff vs ephemeral DB
+      # akan menghitung "missing schema" sebagai drift palsu.
+      - name: Pre-create schema in ephemeral DB
+        env:
+          PGPASSWORD: password
+        run: |
+          psql -h localhost -p 5432 -U postgres -d migration_db \
+            -c "CREATE SCHEMA IF NOT EXISTS \"${SCHEMA}\""
+          echo "Schema ${SCHEMA} verified/created in ephemeral DB."
+
       - name: Apply existing migrations
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db"
-          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db"
+          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
+          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
         run: npx prisma migrate deploy
 
       - name: Check for schema drift
         id: drift
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db"
-          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db"
+          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
+          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
         run: |
           # --from-url: diff dari database state (sudah punya semua existing migrations)
           # --to-schema-datamodel: diff ke target schema file
@@ -243,8 +317,8 @@ jobs:
       - name: Generate migration via diff --script
         if: steps.drift.outputs.has_drift == 'true'
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db"
-          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db"
+          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
+          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
         run: |
           MIGRATION_NAME="auto_$(date +%Y%m%d%H%M%S)"
           MIGRATION_DIR="prisma/migrations/${MIGRATION_NAME}"
@@ -271,8 +345,8 @@ jobs:
       - name: Verify migration applies cleanly
         if: steps.drift.outputs.has_drift == 'true'
         env:
-          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db"
-          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db"
+          DATABASE_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
+          DIRECT_URL: "postgresql://postgres:password@localhost:5432/migration_db?schema=${{ env.SCHEMA }}"
         run: |
           npx prisma migrate deploy
           echo "Migration verified successfully"
@@ -440,17 +514,65 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
+      # ── Per-Project Schema Isolation — Derive ──────────────────────────
+      # Sama dengan generate-migration: turunkan schema name dari repo.
+      # Schema name ini akan disuffix-kan ke semua DATABASE_URL/DIRECT_URL
+      # baik untuk migration step di CI maupun untuk runtime env di Vercel.
+      - name: Derive project schema name
+        run: |
+          REPO_FULL="${{ github.repository }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          NORMALIZED=$(echo "$REPO_NAME" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9]/_/g' \
+            | sed -E 's/_+/_/g' \
+            | sed -E 's/^_+|_+$//g' \
+            | cut -c1-50)
+          HASH=$(echo -n "$REPO_FULL" | shasum -a 256 | cut -c1-6)
+          SCHEMA="proj_${NORMALIZED}_${HASH}"
+          echo "Derived project schema: ${SCHEMA}"
+          echo "SCHEMA=${SCHEMA}" >> $GITHUB_ENV
+
+      # ── Per-Project Schema Isolation — Inject schema suffix ───────────
+      # Upsert ?schema=<SCHEMA> ke DATABASE_URL dan DIRECT_URL.
+      # Hasilnya di-export via $GITHUB_ENV → dipakai oleh:
+      #   - Vercel env upsert (runtime app target schema)
+      #   - Run Prisma Migrations (deploy ke schema)
+      #   - Setup Default Admin (insert ke User table di schema)
+      - name: Inject schema into Supabase URLs
+        env:
+          BASE_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BASE_DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: |
+          upsert_schema() {
+            local url="$1" schema="$2"
+            [ -z "$url" ] && echo "" && return
+            url=$(echo "$url" | sed -E 's/[?&]schema=[^&]*//' | sed -E 's/\?&/?/' | sed -E 's/\?$//')
+            if echo "$url" | grep -q '?'; then
+              echo "${url}&schema=${schema}"
+            else
+              echo "${url}?schema=${schema}"
+            fi
+          }
+          NEW_DB=$(upsert_schema "$BASE_DATABASE_URL" "$SCHEMA")
+          NEW_DIRECT=$(upsert_schema "$BASE_DIRECT_URL" "$SCHEMA")
+          echo "Injected schema=${SCHEMA} into DATABASE_URL and DIRECT_URL"
+          echo "DATABASE_URL=${NEW_DB}" >> $GITHUB_ENV
+          echo "DIRECT_URL=${NEW_DIRECT}" >> $GITHUB_ENV
+
       # Cek apakah Vercel project sudah ada.
       # Jika belum → buat otomatis via Vercel API dan link ke GitHub repo.
       # Juga set commandForIgnoringBuildStep="exit 0" agar Vercel tidak
       # auto-deploy dari GitHub webhook (deploy dikontrol penuh oleh job ini).
+      # NOTE: DB_URL pakai env.DATABASE_URL (schema-suffix-ed) supaya
+      # project Vercel BARU langsung pakai schema target sejak awal.
       - name: Get or create Vercel project
         id: vercel_project
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           PROJECT_NAME: ${{ steps.target.outputs.project_name }}
-          DB_URL: ${{ secrets.DATABASE_URL }}
+          DB_URL: ${{ env.DATABASE_URL }}
           AUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'change_me_in_vercel_dashboard_32chars_min' }}
         run: |
           # teamId param hanya disertakan jika VERCEL_ORG_ID tidak kosong
@@ -534,13 +656,17 @@ jobs:
       # Upsert env vars ke Vercel project (berlaku untuk project baru maupun yang sudah ada).
       # Menggunakan ?upsert=true agar key yang sudah ada ikut ter-update.
       # Termasuk DIRECT_URL untuk Prisma CLI operations.
+      # NOTE: DB_URL dan DIRECT_URL pakai env.* (schema-suffix-ed dari step
+      # "Inject schema into Supabase URLs"). Runtime app di Vercel akan
+      # konek dengan ?schema=$SCHEMA → query route ke schema project,
+      # bukan public.
       - name: Upsert environment variables
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           PROJECT_ID: ${{ steps.vercel_project.outputs.project_id }}
-          DB_URL: ${{ secrets.DATABASE_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DB_URL: ${{ env.DATABASE_URL }}
+          DIRECT_URL: ${{ env.DIRECT_URL }}
           AUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'change_me_in_vercel_dashboard_32chars_min' }}
           PROJECT_NAME: ${{ steps.target.outputs.project_name }}
         run: |
@@ -590,16 +716,34 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ── Per-Project Schema Isolation — Ensure schema exists ───────────
+      # Idempotent CREATE SCHEMA IF NOT EXISTS terhadap Supabase production
+      # (via DIRECT_URL yang sudah di-suffix dengan ?schema=$SCHEMA).
+      # Wajib jalan SEBELUM `prisma migrate deploy` supaya target schema
+      # sudah ada saat Prisma create `_prisma_migrations` table di dalamnya.
+      - name: Ensure Supabase schema exists
+        env:
+          DATABASE_URL: ${{ env.DIRECT_URL }}
+          DIRECT_URL: ${{ env.DIRECT_URL }}
+        run: |
+          cat > /tmp/create_schema.sql <<SQL
+          CREATE SCHEMA IF NOT EXISTS "${SCHEMA}";
+          SQL
+          npx prisma db execute --file /tmp/create_schema.sql --schema prisma/schema.prisma
+          echo "Schema ${SCHEMA} verified/created in Supabase (production)."
+
       # Jalankan Prisma migrations ke database production (Supabase).
       # PASTI fix (Plan v3 — Change 3): smart deploy dengan 3 fase
       # (pre-flight → apply → post-flight). Auto-resolve failed `auto_*`
       # migration; manual review untuk migration lain. Ganti dumb retry
       # loop lama yang tidak bisa lewati P3009.
+      # NOTE: pakai env.DIRECT_URL (yang sudah di-suffix ?schema=) bukan
+      # secret langsung — semua prisma operation scope ke schema project.
       - name: Run Prisma Migrations
         timeout-minutes: 5
         env:
-          DATABASE_URL: ${{ secrets.DIRECT_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          DATABASE_URL: ${{ env.DIRECT_URL }}
+          DIRECT_URL: ${{ env.DIRECT_URL }}
           # Default false untuk kompatibilitas shared-Supabase setup. Set ke
           # "true" di repo/org variables saat sudah migrate ke 1-to-1 Supabase.
           ENFORCE_DRIFT_CHECK: ${{ vars.ENFORCE_DRIFT_CHECK || 'false' }}
@@ -711,8 +855,9 @@ jobs:
         timeout-minutes: 1
         run: pnpm prisma generate && pnpm tsx scripts/setup-default-admin.ts
         env:
-          DATABASE_URL: ${{ secrets.DIRECT_URL }}
-          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          # Pakai schema-suffix-ed URL — insert User ke schema project, bukan public
+          DATABASE_URL: ${{ env.DIRECT_URL }}
+          DIRECT_URL: ${{ env.DIRECT_URL }}
           DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
           DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
           DEFAULT_ADMIN_NAME: ${{ secrets.DEFAULT_ADMIN_NAME }}
