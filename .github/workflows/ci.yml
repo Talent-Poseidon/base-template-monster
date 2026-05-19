@@ -181,13 +181,13 @@ jobs:
           # Marker 2: drift — migration applied to DB but missing from repo.
           # Strict mode untuk 1-to-1 Supabase. Default OFF untuk shared-Supabase setup.
           if [ "${ENFORCE_DRIFT_CHECK:-false}" = "true" ]; then
-            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database.*(missing|not present)'; then
               echo "::error::[STAGING_DB_STATE_ERROR] Drift: Supabase punya migration yang tidak ada di prisma/migrations/ repo. Kemungkinan race antar-epic atau manual change."
               echo "::error::AKSI MANUAL: Sync prisma/migrations/ dengan state Supabase (pull migration dari epic lain yang sudah merge), atau resolve drift via dashboard."
               exit 1
             fi
           else
-            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database.*(missing|not present)'; then
               echo "::warning::Drift detected (sibling apps' migrations terlihat di shared Supabase). ENFORCE_DRIFT_CHECK=false → skip block. Set ke true saat migrate ke 1-to-1 Supabase."
             fi
           fi
@@ -644,13 +644,13 @@ jobs:
 
           # Drift check — strict mode untuk 1-to-1 Supabase. Default OFF untuk shared.
           if [ "${ENFORCE_DRIFT_CHECK:-false}" = "true" ]; then
-            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database.*(missing|not present)'; then
               echo "::error::[STAGING_DB_STATE_ERROR] Drift: Supabase punya migration yang tidak ada di repo. Tidak akan apply blind."
               echo "::error::AKSI MANUAL: Sync prisma/migrations/ dengan state Supabase atau resolve drift via dashboard."
               exit 1
             fi
           else
-            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database.*(missing|not present)'; then
               echo "::warning::Drift detected (sibling apps' migrations terlihat di shared Supabase). ENFORCE_DRIFT_CHECK=false → skip block. Set ke true saat migrate ke 1-to-1 Supabase."
             fi
           fi
