@@ -169,12 +169,22 @@ jobs:
           echo "STAGING_DIRECT_URL valid (direct connection)."
 
       # ── Per-Project Schema Isolation — Inject schema suffix ───────────
-      # Append `?schema=$SCHEMA` ke STAGING_DIRECT_URL (upsert: replace
-      # existing schema= param kalau ada). Override secret value untuk
-      # downstream step via $GITHUB_ENV.
+      # Append `?schema=$SCHEMA` ke URL (upsert: replace existing schema=
+      # param kalau ada). Override env STAGING_DIRECT_URL untuk downstream
+      # step via $GITHUB_ENV.
+      #
+      # NOTE (Opsi α — IPv6 reachability fix): source URL pakai
+      # secrets.DIRECT_URL (pooler — IPv4 reachable dari GitHub-hosted
+      # runner), BUKAN secrets.STAGING_DIRECT_URL (direct format yang
+      # IPv6-only di Supabase free tier — sering P1001 dari runner).
+      # Validate STAGING_DIRECT_URL step di atas tetap jalan untuk
+      # diagnostic format check (vestigial — tidak guard ops downstream),
+      # tapi actual Supabase operations pakai DIRECT_URL pooler.
+      # Schema isolation tetap fungsional karena ?schema= parameter
+      # bekerja independent dari pilihan endpoint (direct vs pooler).
       - name: Inject schema into Supabase URL
         env:
-          BASE_STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          BASE_STAGING_DIRECT_URL: ${{ secrets.DIRECT_URL }}
         run: |
           upsert_schema() {
             local url="$1" schema="$2"
