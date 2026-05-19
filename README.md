@@ -87,3 +87,46 @@ This project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) tha
 - Lints the code.
 - Checks types.
 - Builds the application.
+
+### Required GitHub Secrets
+
+Set these in **GitHub repo or org-level Secrets** (Settings → Secrets and variables → Actions).
+
+| Secret | Purpose | Format |
+|---|---|---|
+| `DATABASE_URL` | Pooled connection for runtime app | `postgresql://user:pass@aws-X-XX-Y.pooler.supabase.com:5432/postgres?pgbouncer=true&connection_limit=1` |
+| `DIRECT_URL` | **Direct** connection for `prisma migrate deploy` (deploy job) | `postgresql://user:pass@db.<projectref>.supabase.co:5432/postgres` |
+| `STAGING_DIRECT_URL` | **Direct** read-only connection for `prisma migrate status` pre-flight (generate-migration job) | `postgresql://readonly_user:pass@db.<projectref>.supabase.co:5432/postgres` |
+| `NEXTAUTH_SECRET` | NextAuth signing secret | 32+ chars, generate via `openssl rand -base64 32` |
+| `VERCEL_TOKEN` | Vercel API token for deploy | from Vercel dashboard |
+| `VERCEL_ORG_ID` | Vercel team ID | `team_xxxxx` (optional) |
+| `GH_PAT` | GitHub PAT for auto-merge (optional) | `repo` scope |
+
+**Critical rule about Supabase connection URLs:**
+- ✅ Direct (use for `DIRECT_URL` and `STAGING_DIRECT_URL`): host `db.<projectref>.supabase.co`, port `5432`.
+- ❌ Pooler (use for `DATABASE_URL` runtime only): host contains `pooler.`, port `5432` (session) or `6543` (transaction).
+
+Running `prisma migrate deploy` through a pooler URL is the historical source of partial-apply failures that leave a half-committed row in `_prisma_migrations` (Prisma error `P3009`). The `Validate STAGING_DIRECT_URL` step in the generate-migration job will fail fast if either secret is mis-configured with a pooler host.
+
+The `STAGING_DIRECT_URL` should use a read-only role with these grants:
+- `SELECT` on `_prisma_migrations`
+- `SELECT` on `pg_catalog.*` (for schema introspection)
+
+No write permissions needed — this URL is for pre-flight check only, never for apply.
+
+### Optional: `ENFORCE_DRIFT_CHECK` Variable
+
+The CI pre-flight has two checks:
+1. **Failed migration detection** (always active) — blocks if Supabase has a half-applied migration. This is the core P3009 protection and cannot be disabled.
+2. **Drift detection** (configurable via `ENFORCE_DRIFT_CHECK`) — blocks if Supabase has migrations that aren't in your repo. Default: **disabled**.
+
+| `ENFORCE_DRIFT_CHECK` | When to use | Behavior |
+|---|---|---|
+| `false` (default) | **Shared Supabase setup** — e.g. free tier with 1 Supabase project shared across multiple apps. Sibling apps' migrations naturally appear as "drift" but are not actual problems. | Drift detected → log warning, don't block CI. |
+| `true` | **1-to-1 Supabase setup** — each app has its own dedicated Supabase project. Any drift is genuinely unexpected. | Drift detected → block CI with `[STAGING_DB_STATE_ERROR]`. |
+
+How to set: GitHub repo or org → Settings → Secrets and variables → Actions → **Variables** tab (not Secrets) → Add `ENFORCE_DRIFT_CHECK` with value `true`.
+
+**Recommended migration path**:
+1. Start with shared Supabase + `ENFORCE_DRIFT_CHECK=false` (or unset).
+2. When scaling to paid Supabase with dedicated projects per app, set `ENFORCE_DRIFT_CHECK=true` org-wide or per-repo. No code change needed.

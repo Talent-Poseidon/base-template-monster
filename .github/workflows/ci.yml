@@ -121,6 +121,84 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ── Step 0: Validate STAGING_DIRECT_URL (PASTI Plan v3 — Change 1) ──
+      # Migration butuh direct connection. Pooler / transaction-pool URL
+      # menyebabkan partial-apply yang historically jadi sumber P3009.
+      - name: Validate STAGING_DIRECT_URL
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+        run: |
+          if [ -z "$STAGING_DIRECT_URL" ]; then
+            echo "::error::[STAGING_DB_STATE_ERROR] Secret STAGING_DIRECT_URL belum di-set."
+            echo "::error::AKSI MANUAL: Set secret di GitHub repo/org dengan direct connection (format: postgresql://user:pass@db.<ref>.supabase.co:5432/postgres). Bukan pooler URL."
+            exit 1
+          fi
+          HOST=$(echo "$STAGING_DIRECT_URL" | sed -E 's|^[^@]*@([^:/?]+).*|\1|')
+          PORT=$(echo "$STAGING_DIRECT_URL" | sed -nE 's|^[^@]*@[^:]+:([0-9]+).*|\1|p')
+          echo "STAGING_DIRECT_URL host=$HOST port=${PORT:-default}"
+          if echo "$HOST" | grep -qiE 'pooler\.'; then
+            echo "::error::[STAGING_DB_STATE_ERROR] STAGING_DIRECT_URL pakai pooler ($HOST). Wajib pakai direct (db.<ref>.supabase.co)."
+            exit 1
+          fi
+          if [ "$PORT" = "6543" ]; then
+            echo "::error::[STAGING_DB_STATE_ERROR] STAGING_DIRECT_URL pakai port 6543 (transaction pooler). Wajib pakai 5432 direct."
+            exit 1
+          fi
+          echo "STAGING_DIRECT_URL valid (direct connection)."
+
+      # ── Step 1: Pre-flight Supabase state (PASTI Plan v3 — Change 1) ────
+      # Cek failed migration / drift di Supabase SEBELUM generate SQL.
+      # Pakai 'prisma migrate resolve --rolled-back' sebagai canonical marker
+      # (Prisma selalu emit suggestion ini kalau ada failed migration).
+      - name: Pre-flight Supabase migration state
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          # Default false untuk kompatibilitas shared-Supabase setup (free tier dengan
+          # 1 Supabase shared lintas app). Set ke "true" di repo/org variables saat
+          # sudah migrate ke 1 app = 1 Supabase project untuk re-enable strict drift block.
+          ENFORCE_DRIFT_CHECK: ${{ vars.ENFORCE_DRIFT_CHECK || 'false' }}
+        run: |
+          set +e
+          STATUS_OUT=$(npx prisma migrate status 2>&1)
+          STATUS_EXIT=$?
+          set -e
+          echo "--- prisma migrate status (Supabase) ---"
+          echo "$STATUS_OUT"
+          echo "----------------------------------------"
+
+          # Marker 1: failed migration in Supabase (selalu aktif — P3009 affects all apps)
+          if echo "$STATUS_OUT" | grep -qE 'prisma migrate resolve --rolled-back'; then
+            FAILED_NAME=$(echo "$STATUS_OUT" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            echo "::error::[STAGING_DB_STATE_ERROR] Supabase punya failed migration: ${FAILED_NAME:-<unknown>}"
+            echo "::error::AKSI MANUAL DIPERLUKAN:"
+            echo "::error::  1. Verifikasi state DB di Supabase dashboard"
+            echo "::error::  2. Jalankan terhadap Supabase: npx prisma migrate resolve --rolled-back ${FAILED_NAME:-<NAMA>}"
+            echo "::error::  3. Re-trigger epic dari UI fe-be"
+            exit 1
+          fi
+
+          # Marker 2: drift — migration applied to DB but missing from repo.
+          # Strict mode untuk 1-to-1 Supabase. Default OFF untuk shared-Supabase setup.
+          if [ "${ENFORCE_DRIFT_CHECK:-false}" = "true" ]; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+              echo "::error::[STAGING_DB_STATE_ERROR] Drift: Supabase punya migration yang tidak ada di prisma/migrations/ repo. Kemungkinan race antar-epic atau manual change."
+              echo "::error::AKSI MANUAL: Sync prisma/migrations/ dengan state Supabase (pull migration dari epic lain yang sudah merge), atau resolve drift via dashboard."
+              exit 1
+            fi
+          else
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+              echo "::warning::Drift detected (sibling apps' migrations terlihat di shared Supabase). ENFORCE_DRIFT_CHECK=false → skip block. Set ke true saat migrate ke 1-to-1 Supabase."
+            fi
+          fi
+
+          # Exit code > 1 = error lain (bukan 'has changes')
+          if [ $STATUS_EXIT -gt 1 ]; then
+            echo "::error::[STAGING_DB_STATE_ERROR] prisma migrate status di Supabase gagal (exit $STATUS_EXIT). Lihat log di atas."
+            exit 1
+          fi
+          echo "Supabase state OK — tidak ada failed migration, tidak ada drift."
+
       - name: Wait for Postgres
         run: |
           until pg_isready -h localhost -p 5432 -U postgres; do
@@ -512,35 +590,118 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Jalankan Prisma migrations ke database production (Supabase)
-      # Idempotent: hanya apply migrasi yang belum diapply
-      # Retry max 3x untuk handle transient connection errors
+      # Jalankan Prisma migrations ke database production (Supabase).
+      # PASTI fix (Plan v3 — Change 3): smart deploy dengan 3 fase
+      # (pre-flight → apply → post-flight). Auto-resolve failed `auto_*`
+      # migration; manual review untuk migration lain. Ganti dumb retry
+      # loop lama yang tidak bisa lewati P3009.
       - name: Run Prisma Migrations
-        timeout-minutes: 3
+        timeout-minutes: 5
         env:
           DATABASE_URL: ${{ secrets.DIRECT_URL }}
           DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          # Default false untuk kompatibilitas shared-Supabase setup. Set ke
+          # "true" di repo/org variables saat sudah migrate ke 1-to-1 Supabase.
+          ENFORCE_DRIFT_CHECK: ${{ vars.ENFORCE_DRIFT_CHECK || 'false' }}
         run: |
-          MAX_RETRIES=3
-          ATTEMPT=0
+          set -uo pipefail
 
-          while [ $ATTEMPT -lt $MAX_RETRIES ]; do
-            ATTEMPT=$((ATTEMPT + 1))
-            echo "=== Attempt $ATTEMPT/$MAX_RETRIES ==="
+          # ── Phase 3a: Pre-flight status check ───────────────────────────
+          # Cek apakah ada failed migration di _prisma_migrations Supabase.
+          # Auto-resolve kalau itu `auto_*` (additive-only, di-enforce oleh
+          # guard DROP/RENAME di fe-be ci-manager.ts). Manual review untuk
+          # migration lain (init_*, manual, dst.) — terlalu berisiko data loss.
+          echo "── Phase 3a: Pre-flight migration status ──"
+          set +e
+          STATUS_OUT=$(npx prisma migrate status 2>&1)
+          STATUS_EXIT=$?
+          set -e
+          echo "$STATUS_OUT"
 
-            if npx prisma migrate deploy; then
-              echo "Migration berhasil diterapkan"
-              exit 0
+          if echo "$STATUS_OUT" | grep -qE 'prisma migrate resolve --rolled-back'; then
+            FAILED_NAME=$(echo "$STATUS_OUT" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            echo "Detected failed migration: ${FAILED_NAME:-<unknown>}"
+
+            if [ -z "$FAILED_NAME" ]; then
+              echo "::error::[STAGING_DB_STATE_ERROR] Failed migration terdeteksi tapi nama tidak bisa di-extract. Cek log di atas dan lakukan resolve manual."
+              exit 1
             fi
 
-            if [ $ATTEMPT -lt $MAX_RETRIES ]; then
-              echo "Attempt $ATTEMPT gagal. Retry dalam 5 detik..."
-              sleep 5
+            if [[ "$FAILED_NAME" == auto_* ]]; then
+              echo "Auto-resolving '$FAILED_NAME' (additive-only, di-generate oleh agent CI)..."
+              if npx prisma migrate resolve --rolled-back "$FAILED_NAME"; then
+                echo "Resolved. Lanjut ke apply phase."
+              else
+                echo "::error::[STAGING_DB_STATE_ERROR] migrate resolve --rolled-back $FAILED_NAME gagal. Investigasi manual diperlukan."
+                exit 1
+              fi
+            else
+              echo "::error::[STAGING_DB_STATE_ERROR] Failed migration '$FAILED_NAME' BUKAN auto_* (kemungkinan manual / init / non-additive). Auto-resolve di-block untuk safety."
+              echo "::error::AKSI MANUAL: (1) Verifikasi state DB, (2) jalankan: npx prisma migrate resolve --rolled-back $FAILED_NAME OR --applied $FAILED_NAME (sesuai kondisi), (3) re-trigger deploy."
+              exit 1
             fi
-          done
+          fi
 
-          echo "::error::Prisma migrate deploy gagal setelah $MAX_RETRIES percobaan"
-          exit 1
+          # Drift check — strict mode untuk 1-to-1 Supabase. Default OFF untuk shared.
+          if [ "${ENFORCE_DRIFT_CHECK:-false}" = "true" ]; then
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+              echo "::error::[STAGING_DB_STATE_ERROR] Drift: Supabase punya migration yang tidak ada di repo. Tidak akan apply blind."
+              echo "::error::AKSI MANUAL: Sync prisma/migrations/ dengan state Supabase atau resolve drift via dashboard."
+              exit 1
+            fi
+          else
+            if echo "$STATUS_OUT" | grep -qE 'applied to the database but missing'; then
+              echo "::warning::Drift detected (sibling apps' migrations terlihat di shared Supabase). ENFORCE_DRIFT_CHECK=false → skip block. Set ke true saat migrate ke 1-to-1 Supabase."
+            fi
+          fi
+
+          # Exit code > 1 = error tak terduga (bukan 'has pending migrations').
+          if [ $STATUS_EXIT -gt 1 ]; then
+            echo "::error::[STAGING_DB_STATE_ERROR] prisma migrate status gagal (exit $STATUS_EXIT). Lihat log."
+            exit 1
+          fi
+
+          # ── Phase 3b: Apply migration (sekali, no retry buta) ──────────
+          # Migration apply di-jalankan SEKALI. Kalau gagal, post-flight
+          # akan investigasi state — retry buta tidak menolong P3009.
+          echo "── Phase 3b: Apply migration ──"
+          set +e
+          npx prisma migrate deploy
+          APPLY_EXIT=$?
+          set -e
+
+          # ── Phase 3c: Post-flight verify ───────────────────────────────
+          # Idempotent — re-check status untuk validasi state akhir.
+          echo "── Phase 3c: Post-flight verification ──"
+          set +e
+          STATUS_OUT_POST=$(npx prisma migrate status 2>&1)
+          set -e
+          echo "$STATUS_OUT_POST"
+
+          if echo "$STATUS_OUT_POST" | grep -qE 'prisma migrate resolve --rolled-back'; then
+            FAILED_AFTER=$(echo "$STATUS_OUT_POST" | grep -oE 'migrate resolve --rolled-back[[:space:]]+[A-Za-z0-9_]+' | head -1 | awk '{print $NF}')
+            echo "::error::[STAGING_DB_STATE_ERROR] Apply selesai tapi state masih punya failed migration: ${FAILED_AFTER:-<unknown>}. Butuh investigasi manual."
+            exit 1
+          fi
+
+          if [ $APPLY_EXIT -ne 0 ]; then
+            echo "::error::[STAGING_DB_STATE_ERROR] prisma migrate deploy gagal (exit $APPLY_EXIT) tapi tidak ada failed marker. Mungkin error transient — re-trigger deploy."
+            exit 1
+          fi
+
+          if echo "$STATUS_OUT_POST" | grep -qE 'Database schema is up to date|No pending migrations'; then
+            echo "Migration berhasil diterapkan — Supabase up to date."
+            exit 0
+          fi
+
+          if echo "$STATUS_OUT_POST" | grep -qE 'have not yet been applied|not yet been applied'; then
+            echo "::error::[STAGING_DB_STATE_ERROR] Apply selesai tapi masih ada pending migration. State tidak konsisten."
+            exit 1
+          fi
+
+          # Default: anggap sukses kalau apply exit 0 dan tidak ada signal failure.
+          echo "Migration berhasil diterapkan."
+          exit 0
 
       # Buat default admin user di database (idempotent)
       # Hanya jalan jika DEFAULT_ADMIN_EMAIL + DEFAULT_ADMIN_PASSWORD
